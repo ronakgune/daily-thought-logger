@@ -8,3 +8,7 @@ export { DatabaseService, getDatabaseService, closeDatabaseService } from './dat
 // Gemini AI service
 export { GeminiService, geminiService } from './gemini';
 export { KeychainService, keychainService } from './keychain';
+
+// Analysis service
+export { AnalysisService, analysisService } from './analysis';
+export type { AnalyzeAudioOptions, AnalyzeTextOptions } from './analysis';
