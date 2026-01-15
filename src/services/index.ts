@@ -19,3 +19,12 @@ export type { AnalyzeAudioOptions, AnalyzeTextOptions } from './analysis';
 // Pending queue service (AI-18)
 export { PendingQueueService, pendingQueueService } from './pending-queue';
 export type { PendingLog, QueueResult, RetryConfig } from './pending-queue';
+
+// Audio recorder service (AI-21)
+export { AudioRecorderService, AudioRecorderError } from './audio-recorder';
+export type {
+  PermissionState,
+  RecordingState,
+  RecordingResult,
+  AudioLevel,
+} from './audio-recorder';
