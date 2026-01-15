@@ -50,6 +50,10 @@ export function normalizeConfidence(confidence: number | undefined): number {
 
 /**
  * Determines confidence level based on normalized score
+ * Boundaries:
+ * - HIGH: > 0.8 (values 0.81-1.0)
+ * - MEDIUM: 0.5-0.8 (values 0.5-0.8 inclusive)
+ * - LOW: < 0.5 (values 0.0-0.49)
  *
  * @param confidence - Normalized confidence score (0-1)
  * @returns Confidence level enum
@@ -86,6 +90,19 @@ export function validateSegmentType(type: string): SegmentType {
 }
 
 /**
+ * Validates segment content is not empty or whitespace-only
+ *
+ * @param content - Content to validate
+ * @throws {Error} If content is empty or whitespace-only
+ */
+export function validateContent(content: string): void {
+  const trimmed = content.trim();
+  if (trimmed.length === 0) {
+    throw new Error('Segment content cannot be empty or whitespace-only');
+  }
+}
+
+/**
  * Processes a raw segment into a normalized processed segment
  *
  * @param raw - Raw segment from API
@@ -96,9 +113,13 @@ export function processSegment(
   raw: RawSegment,
   config: Required<ExtractionConfig>
 ): ProcessedSegment {
+  // Validate content before processing
+  validateContent(raw.content);
+
+  // Always normalize confidence to ensure it's in 0-1 range
   const normalizedConfidence = config.normalizeConfidence
     ? normalizeConfidence(raw.confidence)
-    : (raw.confidence ?? 0.5);
+    : normalizeConfidence(raw.confidence ?? 0.5);
 
   const confidenceLevel = getConfidenceLevel(normalizedConfidence);
   const needsReview = normalizedConfidence < config.reviewThreshold;
