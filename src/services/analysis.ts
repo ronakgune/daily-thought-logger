@@ -21,6 +21,16 @@ import type {
 import type { GeminiError } from '../types/gemini';
 
 /**
+ * Maximum length for transcript text (characters)
+ */
+const MAX_TRANSCRIPT_LENGTH = 50000;
+
+/**
+ * Maximum length for individual segment text (characters)
+ */
+const MAX_SEGMENT_TEXT_LENGTH = 5000;
+
+/**
  * Options for audio analysis
  */
 export interface AnalyzeAudioOptions {
@@ -134,12 +144,17 @@ export class AnalysisService {
       throw this.createError('INVALID_REQUEST', 'Text cannot be empty');
     }
 
+    // Validate transcript length
+    if (text.length > MAX_TRANSCRIPT_LENGTH) {
+      throw this.createError(
+        'INVALID_REQUEST',
+        `Transcript exceeds maximum length of ${MAX_TRANSCRIPT_LENGTH} characters`
+      );
+    }
+
     this.log('Step 2: Analyzing content with classification prompt...');
 
     try {
-      // Construct the full prompt with the transcript
-      const fullPrompt = `${CLASSIFICATION_PROMPT}\n\n${text}`;
-
       // Get raw analysis from Gemini
       const geminiResult = await this.gemini.analyzeContent(text, CLASSIFICATION_PROMPT);
       const rawResponse = geminiResult.content;
@@ -197,6 +212,11 @@ export class AnalysisService {
         throw new Error('Response is not an object');
       }
 
+      // Validate that parsed object has segments array before casting
+      if (!('segments' in parsed) || !Array.isArray(parsed.segments)) {
+        throw new Error('Response missing "segments" array');
+      }
+
       return parsed as GeminiAnalysisResponse;
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown parsing error';
@@ -237,6 +257,12 @@ export class AnalysisService {
 
         if (!segment.text || typeof segment.text !== 'string') {
           this.log(`Warning: Segment ${i} missing or invalid text, skipping`);
+          continue;
+        }
+
+        // Validate segment text length
+        if (segment.text.length > MAX_SEGMENT_TEXT_LENGTH) {
+          this.log(`Warning: Segment ${i} exceeds maximum text length of ${MAX_SEGMENT_TEXT_LENGTH} characters, skipping`);
           continue;
         }
 
