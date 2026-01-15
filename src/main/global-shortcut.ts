@@ -47,7 +47,7 @@ export class GlobalShortcutService {
    */
   register(callback: () => void): boolean {
     if (this.config.enabled) {
-      console.warn('Global shortcut already registered');
+      console.warn(`Global shortcut already registered: ${this.config.accelerator}`);
       return true;
     }
 
@@ -59,15 +59,14 @@ export class GlobalShortcutService {
       if (success) {
         this.config.enabled = true;
         this.onShortcutPressed = callback;
-        console.log(`Global shortcut registered: ${this.config.accelerator}`);
+        console.log(`Global shortcut registered successfully: ${this.config.accelerator}`);
         return true;
       } else {
-        console.error(`Failed to register global shortcut: ${this.config.accelerator}`);
-        console.error('This shortcut may already be in use by another application');
+        console.error(`Failed to register global shortcut "${this.config.accelerator}": shortcut may already be in use by another application or is invalid`);
         return false;
       }
     } catch (error) {
-      console.error('Error registering global shortcut:', error);
+      console.error(`Error registering global shortcut "${this.config.accelerator}":`, error);
       return false;
     }
   }
@@ -82,9 +81,9 @@ export class GlobalShortcutService {
 
     try {
       globalShortcut.unregister(this.config.accelerator);
-      console.log(`Global shortcut unregistered: ${this.config.accelerator}`);
+      console.log(`Global shortcut unregistered successfully: ${this.config.accelerator}`);
     } catch (error) {
-      console.error('Error unregistering global shortcut:', error);
+      console.error(`Error unregistering global shortcut "${this.config.accelerator}":`, error);
     } finally {
       // Always update state, even if unregister fails
       this.config.enabled = false;
@@ -99,9 +98,9 @@ export class GlobalShortcutService {
   unregisterAll(): void {
     try {
       globalShortcut.unregisterAll();
-      console.log('All global shortcuts unregistered');
+      console.log('All global shortcuts unregistered successfully');
     } catch (error) {
-      console.error('Error unregistering all shortcuts:', error);
+      console.error('Error unregistering all global shortcuts:', error);
     } finally {
       // Always update state, even if unregister fails
       this.config.enabled = false;
@@ -135,16 +134,29 @@ export class GlobalShortcutService {
    */
   private startRecording(): void {
     console.log('Starting recording via global shortcut');
-    this.state.isRecording = true;
 
     // Create or show recorder window
     if (!this.state.recorderWindow || this.state.recorderWindow.isDestroyed()) {
       // Window creation will be handled by the main process
       // This service just tracks state
       console.log('Recorder window needs to be created');
+      // Only set state to recording after window would be created
+      this.state.isRecording = true;
     } else {
-      this.state.recorderWindow.show();
-      this.state.recorderWindow.focus();
+      try {
+        // Add null safety checks
+        if (this.state.recorderWindow && !this.state.recorderWindow.isDestroyed()) {
+          this.state.recorderWindow.show();
+          this.state.recorderWindow.focus();
+          // Only set state after successful window operations
+          this.state.isRecording = true;
+        } else {
+          console.error('Cannot show recorder window: window is null or destroyed');
+        }
+      } catch (error) {
+        console.error('Error showing recorder window during startRecording:', error);
+        // Don't change state if operation failed
+      }
     }
   }
 
@@ -164,6 +176,11 @@ export class GlobalShortcutService {
    * @param window The recorder window
    */
   setRecorderWindow(window: BrowserWindow | null): void {
+    // Add validation to ensure we don't set a destroyed window
+    if (window && window.isDestroyed()) {
+      console.warn('Attempting to set a destroyed window as recorder window, ignoring');
+      return;
+    }
     this.state.recorderWindow = window;
   }
 
@@ -212,12 +229,39 @@ export class GlobalShortcutService {
    * @returns True if successful, false otherwise
    */
   updateAccelerator(accelerator: string, callback: () => void): boolean {
-    if (this.config.enabled) {
+    // Validate accelerator
+    if (!accelerator || typeof accelerator !== 'string' || accelerator.trim() === '') {
+      console.error('Invalid accelerator provided to updateAccelerator:', accelerator);
+      return false;
+    }
+
+    // Store old accelerator for rollback if needed
+    const oldAccelerator = this.config.accelerator;
+    const wasEnabled = this.config.enabled;
+
+    // Unregister old shortcut if registered
+    if (wasEnabled) {
       this.unregister();
     }
 
+    // Update accelerator
     this.config.accelerator = accelerator;
-    return this.register(callback);
+
+    // Try to register with new accelerator
+    const success = this.register(callback);
+
+    // Rollback if registration failed and was previously enabled
+    if (!success && wasEnabled) {
+      console.warn(`Failed to register new accelerator "${accelerator}", attempting rollback to "${oldAccelerator}"`);
+      this.config.accelerator = oldAccelerator;
+      const rollbackSuccess = this.register(callback);
+      if (!rollbackSuccess) {
+        console.error(`Rollback to "${oldAccelerator}" also failed`);
+      }
+      return false;
+    }
+
+    return success;
   }
 }
 

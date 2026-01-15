@@ -232,6 +232,89 @@ describe('GlobalShortcutService', () => {
     });
   });
 
+  describe('setRecorderWindow', () => {
+    it('should set recorder window successfully', () => {
+      const mockWindow = {
+        isDestroyed: vi.fn().mockReturnValue(false),
+        show: vi.fn(),
+        focus: vi.fn(),
+      } as any;
+
+      service.setRecorderWindow(mockWindow);
+      // Window should be set (we can verify by checking behavior)
+      expect(mockWindow.isDestroyed).toHaveBeenCalled();
+    });
+
+    it('should not set destroyed window', () => {
+      const mockDestroyedWindow = {
+        isDestroyed: vi.fn().mockReturnValue(true),
+        show: vi.fn(),
+        focus: vi.fn(),
+      } as any;
+
+      service.setRecorderWindow(mockDestroyedWindow);
+      // Verify it was checked
+      expect(mockDestroyedWindow.isDestroyed).toHaveBeenCalled();
+      // show should not be called when we try to use it later
+      expect(mockDestroyedWindow.show).not.toHaveBeenCalled();
+    });
+
+    it('should handle null window', () => {
+      service.setRecorderWindow(null);
+      // Should not throw
+      expect(() => service.setRecorderWindow(null)).not.toThrow();
+    });
+
+    it('should handle window operations when window is destroyed', () => {
+      const callback = vi.fn();
+      service.register(callback);
+
+      const mockWindow = {
+        isDestroyed: vi.fn().mockReturnValue(false),
+        show: vi.fn(),
+        focus: vi.fn(),
+      } as any;
+
+      service.setRecorderWindow(mockWindow);
+
+      // Now destroy the window
+      mockWindow.isDestroyed.mockReturnValue(true);
+
+      // Get the registered callback
+      const registeredCallback = mockRegister.mock.calls[0][1];
+
+      // Press shortcut - should handle destroyed window gracefully
+      registeredCallback();
+
+      // Window operations should not have been called since it's destroyed
+      expect(mockWindow.show).not.toHaveBeenCalled();
+      expect(mockWindow.focus).not.toHaveBeenCalled();
+    });
+
+    it('should handle window show errors gracefully', () => {
+      const callback = vi.fn();
+      service.register(callback);
+
+      const mockWindow = {
+        isDestroyed: vi.fn().mockReturnValue(false),
+        show: vi.fn().mockImplementation(() => {
+          throw new Error('Window show error');
+        }),
+        focus: vi.fn(),
+      } as any;
+
+      service.setRecorderWindow(mockWindow);
+
+      const registeredCallback = mockRegister.mock.calls[0][1];
+
+      // Should not throw even though show() throws
+      expect(() => registeredCallback()).not.toThrow();
+
+      // Recording state should not change due to error
+      expect(service.getRecordingState()).toBe(false);
+    });
+  });
+
   describe('isAcceleratorRegistered', () => {
     it('should check if accelerator is registered', () => {
       mockIsRegistered.mockReturnValue(true);
@@ -284,15 +367,90 @@ describe('GlobalShortcutService', () => {
       const callback = vi.fn();
       service.register(callback);
 
-      // Clear mocks and set register to fail
+      // Clear mocks and set register to fail (both new and rollback)
       vi.clearAllMocks();
       mockRegister.mockReturnValue(false);
 
       const result = service.updateAccelerator('CommandOrControl+Alt+R', callback);
 
       expect(result).toBe(false);
-      expect(service.getAccelerator()).toBe('CommandOrControl+Alt+R');
+      // Should rollback to old accelerator when new registration fails
+      expect(service.getAccelerator()).toBe('CommandOrControl+Shift+L');
       expect(service.isRegistered()).toBe(false);
+    });
+
+    it('should validate accelerator and reject empty string', () => {
+      const callback = vi.fn();
+      const result = service.updateAccelerator('', callback);
+
+      expect(result).toBe(false);
+      expect(mockRegister).not.toHaveBeenCalled();
+    });
+
+    it('should validate accelerator and reject null/undefined', () => {
+      const callback = vi.fn();
+      const result1 = service.updateAccelerator(null as any, callback);
+      const result2 = service.updateAccelerator(undefined as any, callback);
+
+      expect(result1).toBe(false);
+      expect(result2).toBe(false);
+      expect(mockRegister).not.toHaveBeenCalled();
+    });
+
+    it('should validate accelerator and reject whitespace-only string', () => {
+      const callback = vi.fn();
+      const result = service.updateAccelerator('   ', callback);
+
+      expect(result).toBe(false);
+      expect(mockRegister).not.toHaveBeenCalled();
+    });
+
+    it('should rollback to old accelerator if new registration fails', () => {
+      const callback = vi.fn();
+      service.register(callback);
+
+      // Clear mocks
+      vi.clearAllMocks();
+
+      // First registration (new accelerator) fails, second (rollback) succeeds
+      mockRegister
+        .mockReturnValueOnce(false) // New accelerator fails
+        .mockReturnValueOnce(true);  // Rollback succeeds
+
+      const result = service.updateAccelerator('CommandOrControl+Alt+R', callback);
+
+      expect(result).toBe(false);
+      // Should have tried to register twice: once for new, once for rollback
+      expect(mockRegister).toHaveBeenCalledTimes(2);
+      // First call with new accelerator
+      expect(mockRegister).toHaveBeenNthCalledWith(1, 'CommandOrControl+Alt+R', expect.any(Function));
+      // Second call with old accelerator (rollback)
+      expect(mockRegister).toHaveBeenNthCalledWith(2, 'CommandOrControl+Shift+L', expect.any(Function));
+      // Should still be registered with old accelerator
+      expect(service.isRegistered()).toBe(true);
+    });
+
+    it('should update callback function when accelerator is updated', () => {
+      const callback1 = vi.fn();
+      const callback2 = vi.fn();
+
+      service.register(callback1);
+
+      // Clear mocks
+      vi.clearAllMocks();
+      mockRegister.mockReturnValue(true);
+
+      service.updateAccelerator('CommandOrControl+Alt+R', callback2);
+
+      // Get the new registered callback
+      const registeredCallback = mockRegister.mock.calls[0][1];
+
+      // Trigger the shortcut
+      registeredCallback();
+
+      // New callback should be called, not old one
+      expect(callback2).toHaveBeenCalledTimes(1);
+      expect(callback1).not.toHaveBeenCalled();
     });
   });
 
