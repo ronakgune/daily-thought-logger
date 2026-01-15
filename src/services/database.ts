@@ -10,7 +10,7 @@ import Database, { Database as DatabaseType } from 'better-sqlite3';
 import { app } from 'electron';
 import * as path from 'path';
 
-import { CREATE_TABLES_SQL, SCHEMA_VERSION } from '../database/schema';
+import { CREATE_TABLES_SQL, SCHEMA_VERSION, MIGRATIONS } from '../database/schema';
 import {
   Log,
   Todo,
@@ -47,6 +47,9 @@ interface LogRow {
   audio_path: string | null;
   transcript: string | null;
   summary: string | null;
+  pending_analysis: number;
+  retry_count: number;
+  last_error: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -158,6 +161,33 @@ export class DatabaseService {
       this.db
         .prepare('INSERT INTO schema_version (version) VALUES (?)')
         .run(SCHEMA_VERSION);
+    } else {
+      // Apply any pending migrations
+      this.applyMigrations();
+    }
+  }
+
+  /**
+   * Applies any pending database migrations.
+   */
+  private applyMigrations(): void {
+    const currentVersionRow = this.db
+      .prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1')
+      .get() as { version: number } | undefined;
+
+    const currentVersion = currentVersionRow?.version ?? 0;
+
+    // Apply migrations in order
+    for (let version = currentVersion + 1; version <= SCHEMA_VERSION; version++) {
+      const migration = MIGRATIONS[version];
+      if (migration) {
+        console.log(`Applying migration to version ${version}...`);
+        this.db.exec(migration);
+        this.db
+          .prepare('INSERT INTO schema_version (version) VALUES (?)')
+          .run(version);
+        console.log(`Migration to version ${version} completed.`);
+      }
     }
   }
 
@@ -245,6 +275,9 @@ export class DatabaseService {
     'audio_path',
     'transcript',
     'summary',
+    'pending_analysis',
+    'retry_count',
+    'last_error',
   ]);
 
   // ============================================================================
@@ -258,6 +291,9 @@ export class DatabaseService {
       audioPath: row.audio_path,
       transcript: row.transcript,
       summary: row.summary,
+      pendingAnalysis: Boolean(row.pending_analysis),
+      retryCount: row.retry_count,
+      lastError: row.last_error,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };
@@ -1143,6 +1179,105 @@ export class DatabaseService {
       learnings: this.getLearningsByLogId(logId),
       accomplishments: this.getAccomplishmentsByLogId(logId),
     };
+  }
+
+  /**
+   * Runs a function within a database transaction.
+   * @param fn - The function to run in the transaction
+   * @returns The result of the function
+   */
+  runTransaction<T>(fn: () => T): T {
+    const transaction = this.db.transaction(fn);
+    return transaction();
+  }
+
+  // ============================================================================
+  // Pending Analysis Operations (AI-18)
+  // ============================================================================
+
+  /**
+   * Gets all logs that are pending analysis.
+   * @returns Array of logs with pending_analysis = true
+   */
+  getPendingLogs(): Log[] {
+    const rows = this.db
+      .prepare('SELECT * FROM logs WHERE pending_analysis = 1 ORDER BY created_at ASC')
+      .all() as LogRow[];
+
+    return rows.map((row) => this.transformLogRow(row));
+  }
+
+  /**
+   * Marks a log as pending analysis.
+   * @param logId - The log ID
+   * @param errorMessage - Optional error message to store
+   * @returns The updated log
+   */
+  markLogAsPending(logId: number, errorMessage?: string): Log {
+    const existing = this.getLogById(logId);
+    if (!existing) {
+      throw new NotFoundError('Log', logId);
+    }
+
+    this.db
+      .prepare(
+        `UPDATE logs
+         SET pending_analysis = 1,
+             retry_count = retry_count + 1,
+             last_error = ?,
+             updated_at = datetime('now')
+         WHERE id = ?`
+      )
+      .run(errorMessage ?? null, logId);
+
+    return this.getLogById(logId)!;
+  }
+
+  /**
+   * Marks a log as successfully analyzed (no longer pending).
+   * @param logId - The log ID
+   * @returns The updated log
+   */
+  markLogAsAnalyzed(logId: number): Log {
+    const existing = this.getLogById(logId);
+    if (!existing) {
+      throw new NotFoundError('Log', logId);
+    }
+
+    this.db
+      .prepare(
+        `UPDATE logs
+         SET pending_analysis = 0,
+             last_error = NULL,
+             updated_at = datetime('now')
+         WHERE id = ?`
+      )
+      .run(logId);
+
+    return this.getLogById(logId)!;
+  }
+
+  /**
+   * Resets the retry count for a pending log.
+   * @param logId - The log ID
+   * @returns The updated log
+   */
+  resetRetryCount(logId: number): Log {
+    const existing = this.getLogById(logId);
+    if (!existing) {
+      throw new NotFoundError('Log', logId);
+    }
+
+    this.db
+      .prepare(
+        `UPDATE logs
+         SET retry_count = 0,
+             updated_at = datetime('now')
+         WHERE id = ?`
+      )
+      .run(logId);
+
+    return this.getLogById(logId)!;
   }
 }
 

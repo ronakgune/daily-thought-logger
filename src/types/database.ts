@@ -13,6 +13,9 @@ export interface Log {
   audioPath: string | null;
   transcript: string | null;
   summary: string | null;
+  pendingAnalysis: boolean;
+  retryCount: number;
+  lastError: string | null;
   createdAt: string;
   updatedAt: string;
 }

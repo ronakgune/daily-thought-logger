@@ -15,3 +15,7 @@ export { KeychainService, keychainService } from './keychain';
 // Analysis service
 export { AnalysisService, analysisService } from './analysis';
 export type { AnalyzeAudioOptions, AnalyzeTextOptions } from './analysis';
+
+// Pending queue service (AI-18)
+export { PendingQueueService, pendingQueueService } from './pending-queue';
+export type { PendingLog, QueueResult, RetryConfig } from './pending-queue';
