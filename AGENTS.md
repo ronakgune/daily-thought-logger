@@ -22,10 +22,41 @@
 - Use Jest or Vitest for testing
 - Minimum 80% coverage for new code
 
-## Git Conventions
-- Conventional commits: feat:, fix:, refactor:, docs:, test:
-- Branch naming: feature/*, bugfix/*, hotfix/*
-- Always reference Linear issue ID in commits: [LIN-123]
+## Git Workflow
+
+### Branch Creation
+- Use Linear's gitBranchName: `feature/ai-x`, `bugfix/ai-x`
+- For parallel work: use git worktrees
+
+### Worktree Location
+- Main repo: `/agent_playground/main-project/`
+- Worktrees: `/agent_playground/main-project-worktrees/{branch}/`
+
+### Commit Format
+```
+type: [AI-X] short description
+
+Optional longer description.
+
+Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>
+```
+
+### Commit Types
+- `feat` - New feature
+- `fix` - Bug fix
+- `refactor` - Code refactoring
+- `docs` - Documentation
+- `test` - Adding tests
+- `chore` - Maintenance
+
+### PR Requirements
+- Title: `[AI-X] Description`
+- Body: Include Linear issue link
+- Request review before merge
+
+### Linear Integration
+- Always reference Linear issue ID in commits: `[AI-X]`
+- Linear auto-links commits containing the issue identifier
 
 ## Security
 - Never hardcode secrets
