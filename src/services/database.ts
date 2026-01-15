@@ -424,6 +424,21 @@ export class DatabaseService {
     const updates: string[] = [];
     const params: (string | null)[] = [];
 
+    // Map camelCase to snake_case for database columns
+    const columnMap: Record<string, string> = {
+      audioPath: 'audio_path',
+      transcript: 'transcript',
+      summary: 'summary',
+    };
+
+    // Validate all provided fields against whitelist
+    for (const key of Object.keys(data)) {
+      const dbColumn = columnMap[key] || key;
+      if (!this.ALLOWED_LOG_UPDATE_COLUMNS.has(dbColumn)) {
+        throw new ValidationError(`Invalid update field for log: ${key}`);
+      }
+    }
+
     if (data.audioPath !== undefined) {
       updates.push('audio_path = ?');
       params.push(data.audioPath);
@@ -575,6 +590,22 @@ export class DatabaseService {
     const updates: string[] = [];
     const params: (string | number | null)[] = [];
 
+    // Map camelCase to snake_case for database columns
+    const columnMap: Record<string, string> = {
+      text: 'text',
+      completed: 'completed',
+      dueDate: 'due_date',
+      priority: 'priority',
+    };
+
+    // Validate all provided fields against whitelist
+    for (const key of Object.keys(data)) {
+      const dbColumn = columnMap[key] || key;
+      if (!this.ALLOWED_TODO_UPDATE_COLUMNS.has(dbColumn)) {
+        throw new ValidationError(`Invalid update field for todo: ${key}`);
+      }
+    }
+
     if (data.text !== undefined) {
       this.validateTextLength(data.text, 'Todo text', 500);
       updates.push('text = ?');
@@ -600,7 +631,6 @@ export class DatabaseService {
       updates.push("updated_at = datetime('now')");
       params.push(id);
 
-      // Safe: updates array is built from controlled strings only
       this.db
         .prepare(`UPDATE todos SET ${updates.join(', ')} WHERE id = ?`)
         .run(...params);
@@ -724,6 +754,21 @@ export class DatabaseService {
     const updates: string[] = [];
     const params: (string | number | null)[] = [];
 
+    // Map camelCase to snake_case for database columns
+    const columnMap: Record<string, string> = {
+      text: 'text',
+      status: 'status',
+      tags: 'tags',
+    };
+
+    // Validate all provided fields against whitelist
+    for (const key of Object.keys(data)) {
+      const dbColumn = columnMap[key] || key;
+      if (!this.ALLOWED_IDEA_UPDATE_COLUMNS.has(dbColumn)) {
+        throw new ValidationError(`Invalid update field for idea: ${key}`);
+      }
+    }
+
     if (data.text !== undefined) {
       this.validateTextLength(data.text, 'Idea text', 1000);
       updates.push('text = ?');
@@ -742,7 +787,6 @@ export class DatabaseService {
       updates.push("updated_at = datetime('now')");
       params.push(id);
 
-      // Safe: updates array is built from controlled strings only
       this.db
         .prepare(`UPDATE ideas SET ${updates.join(', ')} WHERE id = ?`)
         .run(...params);
