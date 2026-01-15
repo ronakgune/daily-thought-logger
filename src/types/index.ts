@@ -32,6 +32,56 @@ export type IdeaStatus = 'new' | 'exploring' | 'parked' | 'done';
 export type SegmentType = 'accomplishment' | 'todo' | 'idea' | 'learning';
 
 // ============================================================================
+// Constants for Runtime Validation
+// ============================================================================
+
+/**
+ * Array of valid priority values for runtime validation
+ */
+export const PRIORITIES = ['high', 'medium', 'low'] as const;
+
+/**
+ * Array of valid idea status values for runtime validation
+ */
+export const IDEA_STATUSES = ['new', 'exploring', 'parked', 'done'] as const;
+
+/**
+ * Array of valid segment type values for runtime validation
+ */
+export const SEGMENT_TYPES = ['accomplishment', 'todo', 'idea', 'learning'] as const;
+
+// ============================================================================
+// Type Guards
+// ============================================================================
+
+/**
+ * Type guard to check if a value is a valid Priority
+ * @param value - Value to check
+ * @returns True if value is a valid Priority
+ */
+export function isPriority(value: unknown): value is Priority {
+  return typeof value === 'string' && PRIORITIES.includes(value as Priority);
+}
+
+/**
+ * Type guard to check if a value is a valid IdeaStatus
+ * @param value - Value to check
+ * @returns True if value is a valid IdeaStatus
+ */
+export function isIdeaStatus(value: unknown): value is IdeaStatus {
+  return typeof value === 'string' && IDEA_STATUSES.includes(value as IdeaStatus);
+}
+
+/**
+ * Type guard to check if a value is a valid SegmentType
+ * @param value - Value to check
+ * @returns True if value is a valid SegmentType
+ */
+export function isSegmentType(value: unknown): value is SegmentType {
+  return typeof value === 'string' && SEGMENT_TYPES.includes(value as SegmentType);
+}
+
+// ============================================================================
 // Core Data Models
 // ============================================================================
 
@@ -111,6 +161,12 @@ export interface Learning {
   topic?: string;
   /** AI confidence score (0-1) for this extraction */
   confidence?: number;
+  /**
+   * Whether user manually changed the classification
+   * Note: Not present in database schema - learnings are typically not reclassified
+   * as they represent factual insights rather than actionable items
+   */
+  user_reclassified?: never;
   /** When the learning was created */
   created_at: Date;
 }
@@ -127,8 +183,34 @@ export interface Accomplishment {
   text: string;
   /** AI confidence score (0-1) for this extraction */
   confidence?: number;
+  /**
+   * Whether user manually changed the classification
+   * Note: Not present in database schema - accomplishments are typically not reclassified
+   * as they represent factual achievements rather than actionable items
+   */
+  user_reclassified?: never;
   /** When the accomplishment was created */
   created_at: Date;
+}
+
+/**
+ * Aggregated statistics for a time period (typically a week)
+ */
+export interface SummaryStats {
+  /** Total number of logs in the period */
+  total_logs: number;
+  /** Number of todos created */
+  todos_created: number;
+  /** Number of todos marked complete */
+  todos_completed: number;
+  /** Number of ideas captured */
+  ideas_generated: number;
+  /** Number of learnings captured */
+  learnings_captured: number;
+  /** Number of accomplishments recorded */
+  accomplishments_recorded: number;
+  /** Total recording time in seconds */
+  total_recording_time: number;
 }
 
 /**
@@ -174,7 +256,7 @@ export interface Segment {
   /** The extracted text content */
   text: string;
   /** AI confidence score (0-1) for this extraction */
-  confidence: number;
+  confidence?: number;
   /** Priority level (only for todos) */
   priority?: Priority;
   /** Category classification (only for ideas) */
@@ -349,7 +431,7 @@ export interface CreateSummaryInput {
  */
 export interface IpcMessages {
   /** Start analysis of audio data */
-  'analyze:start': { audioData: Buffer };
+  'analyze:start': { audioData: ArrayBuffer };
   /** Progress update during analysis */
   'analyze:progress': { status: string; progress?: number };
   /** Analysis completed successfully */
@@ -362,7 +444,7 @@ export interface IpcMessages {
   /** Stop the current recording */
   'recording:stop': Record<string, never>;
   /** Recording completed with audio data */
-  'recording:complete': { audioData: Buffer; duration: number };
+  'recording:complete': { audioData: ArrayBuffer; duration: number };
   /** Recording failed */
   'recording:error': { error: string };
 
@@ -389,26 +471,6 @@ export type IpcPayload<K extends keyof IpcMessages> = IpcMessages[K];
 // ============================================================================
 // Statistics Types
 // ============================================================================
-
-/**
- * Aggregated statistics for a time period (typically a week)
- */
-export interface SummaryStats {
-  /** Total number of logs in the period */
-  total_logs: number;
-  /** Number of todos created */
-  todos_created: number;
-  /** Number of todos marked complete */
-  todos_completed: number;
-  /** Number of ideas captured */
-  ideas_generated: number;
-  /** Number of learnings captured */
-  learnings_captured: number;
-  /** Number of accomplishments recorded */
-  accomplishments_recorded: number;
-  /** Total recording time in seconds */
-  total_recording_time: number;
-}
 
 /**
  * Daily statistics for trend tracking
