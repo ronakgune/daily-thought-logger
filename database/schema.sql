@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS accomplishments (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   log_id INTEGER REFERENCES logs(id) ON DELETE CASCADE,
   text TEXT NOT NULL,
-  confidence REAL,
+  confidence REAL CHECK (confidence IS NULL OR (confidence >= 0.0 AND confidence <= 1.0)),
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -26,8 +26,8 @@ CREATE TABLE IF NOT EXISTS todos (
   log_id INTEGER REFERENCES logs(id) ON DELETE CASCADE,
   text TEXT NOT NULL,
   completed BOOLEAN DEFAULT FALSE,
-  priority TEXT DEFAULT 'medium',
-  confidence REAL,
+  priority TEXT DEFAULT 'medium' CHECK (priority IN ('low', 'medium', 'high')),
+  confidence REAL CHECK (confidence IS NULL OR (confidence >= 0.0 AND confidence <= 1.0)),
   user_reclassified BOOLEAN DEFAULT FALSE,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
@@ -37,9 +37,9 @@ CREATE TABLE IF NOT EXISTS ideas (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   log_id INTEGER REFERENCES logs(id) ON DELETE CASCADE,
   text TEXT NOT NULL,
-  status TEXT DEFAULT 'new',
+  status TEXT DEFAULT 'new' CHECK (status IN ('new', 'reviewing', 'implemented', 'archived')),
   category TEXT,
-  confidence REAL,
+  confidence REAL CHECK (confidence IS NULL OR (confidence >= 0.0 AND confidence <= 1.0)),
   user_reclassified BOOLEAN DEFAULT FALSE,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
@@ -50,7 +50,7 @@ CREATE TABLE IF NOT EXISTS learnings (
   log_id INTEGER REFERENCES logs(id) ON DELETE CASCADE,
   text TEXT NOT NULL,
   topic TEXT,
-  confidence REAL,
+  confidence REAL CHECK (confidence IS NULL OR (confidence >= 0.0 AND confidence <= 1.0)),
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
