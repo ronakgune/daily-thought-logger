@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import type { RecordingState, RecordingSession } from '@types/recorder';
+import { IPC_CHANNELS } from '@types/ipc';
 
 /**
  * FloatingRecorder Component
@@ -26,7 +27,36 @@ export const FloatingRecorder: React.FC = () => {
     state: 'recording'
   });
 
-  // Timer effect - updates every second while recording
+  // IPC listeners effect - listen for state and time updates from main process
+  useEffect(() => {
+    if (!window.electron?.ipcRenderer) {
+      return;
+    }
+
+    // Handler for state changes
+    const handleStateChange = (data: { state: RecordingState }) => {
+      setSession(prev => ({ ...prev, state: data.state }));
+    };
+
+    // Handler for time updates
+    const handleTimeUpdate = (data: { elapsedTime: number }) => {
+      setSession(prev => ({ ...prev, elapsedTime: data.elapsedTime }));
+    };
+
+    // Register listeners
+    window.electron.ipcRenderer.on(IPC_CHANNELS.RECORDER_STATE_CHANGE, handleStateChange);
+    window.electron.ipcRenderer.on(IPC_CHANNELS.RECORDER_TIME_UPDATE, handleTimeUpdate);
+
+    // Cleanup listeners on unmount
+    return () => {
+      if (window.electron?.ipcRenderer) {
+        window.electron.ipcRenderer.removeListener(IPC_CHANNELS.RECORDER_STATE_CHANGE, handleStateChange);
+        window.electron.ipcRenderer.removeListener(IPC_CHANNELS.RECORDER_TIME_UPDATE, handleTimeUpdate);
+      }
+    };
+  }, []);
+
+  // Timer effect - updates every second while recording (fallback for standalone testing)
   useEffect(() => {
     if (session.state !== 'recording') {
       return;
@@ -60,17 +90,15 @@ export const FloatingRecorder: React.FC = () => {
 
   // Handle stop button click
   const handleStop = useCallback(() => {
-    // Update state to processing
-    setSession(prev => ({ ...prev, state: 'processing' }));
-
-    // Simulate processing (in real app, this would be triggered by IPC event)
-    setTimeout(() => {
-      setSession(prev => ({ ...prev, state: 'complete' }));
-    }, 1500);
-
     // Send IPC message to main process (if available)
     if (window.electron?.ipcRenderer) {
-      window.electron.ipcRenderer.send('recorder:stop');
+      window.electron.ipcRenderer.send(IPC_CHANNELS.RECORDER_STOP);
+    } else {
+      // Fallback for standalone testing
+      setSession(prev => ({ ...prev, state: 'processing' }));
+      setTimeout(() => {
+        setSession(prev => ({ ...prev, state: 'complete' }));
+      }, 1500);
     }
   }, []);
 
@@ -78,7 +106,7 @@ export const FloatingRecorder: React.FC = () => {
   const handleClose = useCallback(() => {
     // Send IPC message to main process (if available)
     if (window.electron?.ipcRenderer) {
-      window.electron.ipcRenderer.send('recorder:close');
+      window.electron.ipcRenderer.send(IPC_CHANNELS.RECORDER_CLOSE);
     }
   }, []);
 
@@ -161,16 +189,3 @@ export const FloatingRecorder: React.FC = () => {
     </div>
   );
 };
-
-// Type declaration for window.electron (will be provided by preload script)
-declare global {
-  interface Window {
-    electron?: {
-      ipcRenderer: {
-        send: (channel: string, ...args: any[]) => void;
-        on: (channel: string, listener: (...args: any[]) => void) => void;
-        removeListener: (channel: string, listener: (...args: any[]) => void) => void;
-      };
-    };
-  }
-}

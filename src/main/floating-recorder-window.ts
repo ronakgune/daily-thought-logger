@@ -72,24 +72,34 @@ export class FloatingRecorderWindow {
     // Enable dragging from the title bar area
     this.window.setWindowButtonVisibility(false);
 
-    // Load the renderer content
-    if (process.env.NODE_ENV === 'development') {
-      // Development: Load from Vite dev server
-      this.window.loadURL('http://localhost:5173/floating-recorder.html');
-    } else {
-      // Production: Load from built files
-      this.window.loadFile(path.join(__dirname, '../renderer/floating-recorder.html'));
-    }
+    // Load the renderer content with error handling
+    const loadPromise = process.env.NODE_ENV === 'development'
+      ? this.window.loadURL('http://localhost:5173/floating-recorder.html')
+      : this.window.loadFile(path.join(__dirname, '../renderer/floating-recorder.html'));
+
+    loadPromise.catch((error: Error) => {
+      console.error('Failed to load floating recorder window:', error);
+      // Close the window on load failure
+      if (this.window && !this.window.isDestroyed()) {
+        this.window.destroy();
+        this.window = null;
+      }
+    });
+
+    // Handle load failures
+    this.window.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
+      console.error(`Floating recorder window failed to load: ${errorDescription} (${errorCode})`);
+    });
 
     // Clean up when window is closed
     this.window.on('closed', () => {
       this.window = null;
     });
 
-    // Prevent window from being closed by Escape key
+    // Prevent window from being closed by Escape key or accidental close
     this.window.on('close', (event) => {
-      // Allow programmatic close, but prevent accidental closes
-      if (!this.window?.isDestroyed()) {
+      // Prevent accidental closes - only allow programmatic close via destroy()
+      if (this.window && !this.window.isDestroyed()) {
         event.preventDefault();
       }
     });
