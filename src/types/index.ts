@@ -19,6 +19,14 @@ export type {
   AnalysisResult as GeminiAnalysisResult,
 } from './gemini';
 
+// Re-export FloatingRecorder types
+export type {
+  RecordingState,
+  FloatingRecorderProps,
+  RecordingSession,
+  FloatingRecorderIpcMessages,
+} from './recorder';
+
 // ============================================================================
 // Enums and Type Aliases
 // ============================================================================
