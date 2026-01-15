@@ -93,6 +93,7 @@ export class AudioRecorderService {
   private startTime: number = 0;
   private audioContext: AudioContext | null = null;
   private analyser: AnalyserNode | null = null;
+  private mediaStreamSource: MediaStreamAudioSourceNode | null = null;
   private dataArray: Uint8Array | null = null;
   private permissionState: PermissionState = 'unknown';
 
@@ -129,6 +130,12 @@ export class AudioRecorderService {
       );
     }
 
+    // Clean up existing stream if requesting permission again
+    if (this.audioStream) {
+      this.audioStream.getTracks().forEach((track) => track.stop());
+      this.audioStream = null;
+    }
+
     try {
       // Request microphone access
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -149,7 +156,7 @@ export class AudioRecorderService {
 
       // Handle specific permission errors
       if (error instanceof Error) {
-        if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
+        if (error.name === 'NotAllowedError') {
           throw new AudioRecorderError(
             'Microphone permission denied. Please enable microphone access in your browser settings.',
             'PERMISSION_DENIED'
@@ -421,14 +428,19 @@ export class AudioRecorderService {
       this.analyser.fftSize = 256;
 
       // Create source from stream
-      const source = this.audioContext.createMediaStreamSource(stream);
-      source.connect(this.analyser);
+      this.mediaStreamSource = this.audioContext.createMediaStreamSource(stream);
+      this.mediaStreamSource.connect(this.analyser);
 
       // Create data array for frequency data
       const bufferLength = this.analyser.frequencyBinCount;
       this.dataArray = new Uint8Array(bufferLength);
     } catch (error) {
       console.error('Failed to initialize audio analysis:', error);
+      // Clean up audio context on failure
+      if (this.audioContext) {
+        this.audioContext.close();
+        this.audioContext = null;
+      }
       // Non-critical, continue without visualization
     }
   }
@@ -454,14 +466,27 @@ export class AudioRecorderService {
       }
     }
 
-    // Fallback to default
-    return 'audio/webm';
+    // Fallback to default - verify it's supported
+    const fallback = 'audio/webm';
+    if (MediaRecorder.isTypeSupported(fallback)) {
+      return fallback;
+    }
+
+    // If even the fallback isn't supported, return empty string
+    // (MediaRecorder will use its default)
+    return '';
   }
 
   /**
    * Cleans up recording resources.
    */
   private cleanup(): void {
+    // Disconnect media stream source
+    if (this.mediaStreamSource) {
+      this.mediaStreamSource.disconnect();
+      this.mediaStreamSource = null;
+    }
+
     // Close audio context
     if (this.audioContext) {
       this.audioContext.close();
