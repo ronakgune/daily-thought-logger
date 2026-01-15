@@ -1,0 +1,363 @@
+/**
+ * Traceability Components Styles
+ * AI-32: Add item-to-log traceability links
+ *
+ * Styles for ItemWithSource, LogDetailView, and Breadcrumb components.
+ */
+
+/* ============================================================================
+ * ItemWithSource Styles
+ * ============================================================================ */
+
+.item-with-source {
+  padding: 12px 16px;
+  margin-bottom: 8px;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  background-color: #ffffff;
+  transition: box-shadow 0.2s ease;
+}
+
+.item-with-source:hover {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.item-content {
+  margin-bottom: 8px;
+}
+
+.item-type {
+  font-size: 12px;
+  font-weight: 600;
+  color: #666;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
+}
+
+.item-text {
+  font-size: 14px;
+  color: #333;
+  line-height: 1.5;
+}
+
+.item-source {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 8px;
+  border-top: 1px solid #f0f0f0;
+}
+
+.source-timestamp {
+  font-size: 12px;
+  color: #888;
+}
+
+.view-source-button {
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #0066cc;
+  background-color: transparent;
+  border: 1px solid #0066cc;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.view-source-button:hover {
+  background-color: #0066cc;
+  color: #ffffff;
+}
+
+.view-source-button:active {
+  transform: scale(0.98);
+}
+
+/* ============================================================================
+ * LogDetailView Styles
+ * ============================================================================ */
+
+.log-detail-view {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+.log-detail-header {
+  margin-bottom: 20px;
+}
+
+.back-button {
+  padding: 8px 16px;
+  font-size: 14px;
+  font-weight: 500;
+  color: #333;
+  background-color: #f5f5f5;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.back-button:hover {
+  background-color: #e8e8e8;
+  border-color: #ccc;
+}
+
+.back-button:active {
+  transform: translateX(-2px);
+}
+
+.log-metadata {
+  margin-bottom: 24px;
+  padding-bottom: 16px;
+  border-bottom: 2px solid #e0e0e0;
+}
+
+.log-date {
+  font-size: 24px;
+  font-weight: 600;
+  color: #222;
+  margin: 0 0 8px 0;
+}
+
+.log-timestamp {
+  font-size: 14px;
+  color: #666;
+}
+
+.log-section {
+  margin-bottom: 32px;
+}
+
+.section-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: #333;
+  margin: 0 0 12px 0;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #e0e0e0;
+}
+
+.transcript-content,
+.summary-content {
+  padding: 16px;
+  background-color: #f9f9f9;
+  border-left: 4px solid #0066cc;
+  border-radius: 4px;
+  font-size: 14px;
+  line-height: 1.6;
+  color: #333;
+  white-space: pre-wrap;
+}
+
+.items-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.item {
+  padding: 12px 16px;
+  background-color: #ffffff;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  transition: all 0.3s ease;
+}
+
+.item.highlighted {
+  background-color: #fff9e6;
+  border-color: #ffcc00;
+  box-shadow: 0 0 0 3px rgba(255, 204, 0, 0.2);
+  animation: highlightPulse 1s ease-in-out;
+}
+
+@keyframes highlightPulse {
+  0%, 100% {
+    box-shadow: 0 0 0 3px rgba(255, 204, 0, 0.2);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(255, 204, 0, 0.3);
+  }
+}
+
+.item .item-text {
+  font-size: 14px;
+  color: #333;
+  margin-bottom: 4px;
+}
+
+.item-meta {
+  font-size: 12px;
+  color: #888;
+  margin-top: 8px;
+}
+
+/* ============================================================================
+ * Breadcrumb Styles
+ * ============================================================================ */
+
+.breadcrumb {
+  margin-bottom: 16px;
+  padding: 12px 0;
+}
+
+.breadcrumb-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.breadcrumb-item {
+  display: flex;
+  align-items: center;
+  font-size: 14px;
+}
+
+.breadcrumb-link {
+  color: #0066cc;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: none;
+  transition: color 0.2s ease;
+}
+
+.breadcrumb-link:hover {
+  color: #0052a3;
+  text-decoration: underline;
+}
+
+.breadcrumb-text {
+  color: #333;
+}
+
+.breadcrumb-item.active .breadcrumb-text {
+  color: #666;
+  font-weight: 500;
+}
+
+.breadcrumb-separator {
+  color: #999;
+  user-select: none;
+}
+
+/* ============================================================================
+ * Responsive Design
+ * ============================================================================ */
+
+@media (max-width: 768px) {
+  .log-detail-view {
+    padding: 16px;
+  }
+
+  .log-date {
+    font-size: 20px;
+  }
+
+  .section-title {
+    font-size: 16px;
+  }
+
+  .item-source {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .view-source-button {
+    align-self: flex-start;
+  }
+}
+
+/* ============================================================================
+ * Dark Mode Support
+ * ============================================================================ */
+
+@media (prefers-color-scheme: dark) {
+  .item-with-source {
+    background-color: #2a2a2a;
+    border-color: #444;
+    color: #e0e0e0;
+  }
+
+  .item-type {
+    color: #aaa;
+  }
+
+  .item-text {
+    color: #e0e0e0;
+  }
+
+  .source-timestamp {
+    color: #999;
+  }
+
+  .view-source-button {
+    color: #4da6ff;
+    border-color: #4da6ff;
+  }
+
+  .view-source-button:hover {
+    background-color: #4da6ff;
+    color: #1a1a1a;
+  }
+
+  .log-detail-view {
+    color: #e0e0e0;
+  }
+
+  .back-button {
+    background-color: #333;
+    color: #e0e0e0;
+    border-color: #555;
+  }
+
+  .back-button:hover {
+    background-color: #3a3a3a;
+  }
+
+  .log-date {
+    color: #f0f0f0;
+  }
+
+  .log-timestamp {
+    color: #aaa;
+  }
+
+  .transcript-content,
+  .summary-content {
+    background-color: #1e1e1e;
+    border-left-color: #4da6ff;
+    color: #e0e0e0;
+  }
+
+  .item {
+    background-color: #2a2a2a;
+    border-color: #444;
+  }
+
+  .item.highlighted {
+    background-color: #3a3520;
+    border-color: #d4a000;
+  }
+
+  .breadcrumb-text {
+    color: #e0e0e0;
+  }
+
+  .breadcrumb-link {
+    color: #4da6ff;
+  }
+
+  .breadcrumb-link:hover {
+    color: #80c1ff;
+  }
+}
