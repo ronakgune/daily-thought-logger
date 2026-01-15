@@ -1,298 +1,506 @@
 /**
- * Database service tests for Daily Thought Logger
- * Uses in-memory SQLite database for testing
+ * Database Service Tests
+ * AI-10: Tests for DatabaseService CRUD operations
  */
 
-import Database from 'better-sqlite3';
-import * as fs from 'fs';
-import * as path from 'path';
-import * as os from 'os';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { DatabaseService } from '../src/services/database';
+import {
+  NotFoundError,
+  ValidationError,
+  CreateLogInput,
+  CreateTodoInput,
+  CreateIdeaInput,
+  CreateLearningInput,
+  CreateAccomplishmentInput,
+  CreateSummaryInput,
+} from '../src/types/database';
 
-// Create a test database module that doesn't depend on Electron
-describe('Database Schema', () => {
-  let db: Database.Database;
-  let testDbPath: string;
+describe('DatabaseService', () => {
+  let db: DatabaseService;
 
-  beforeAll(() => {
-    // Create a temp database for testing
-    testDbPath = path.join(os.tmpdir(), `thought-logger-test-${Date.now()}.db`);
-    db = new Database(testDbPath);
-    db.pragma('foreign_keys = ON');
-
-    // Load and execute schema
-    const schemaPath = path.join(__dirname, '..', 'database', 'schema.sql');
-    const schema = fs.readFileSync(schemaPath, 'utf-8');
-    db.exec(schema);
+  beforeEach(() => {
+    // Use in-memory database for tests
+    db = new DatabaseService(':memory:');
   });
 
-  afterAll(() => {
+  afterEach(() => {
     db.close();
-    // Clean up test database
-    if (fs.existsSync(testDbPath)) {
-      fs.unlinkSync(testDbPath);
-    }
   });
 
-  describe('Tables exist', () => {
-    const expectedTables = ['logs', 'accomplishments', 'todos', 'ideas', 'learnings', 'summaries'];
+  // ============================================================================
+  // Log Tests
+  // ============================================================================
 
-    for (const table of expectedTables) {
-      it(`should have ${table} table`, () => {
-        const result = db.prepare(
-          "SELECT name FROM sqlite_master WHERE type='table' AND name=?"
-        ).get(table) as { name: string } | undefined;
-        expect(result).toBeDefined();
-        expect(result?.name).toBe(table);
+  describe('Logs', () => {
+    it('should create a log', () => {
+      const logData: CreateLogInput = {
+        date: '2024-01-15',
+        transcript: 'Test transcript',
+        summary: 'Test summary',
+      };
+
+      const log = db.createLog(logData);
+
+      expect(log.id).toBeDefined();
+      expect(log.date).toBe('2024-01-15');
+      expect(log.transcript).toBe('Test transcript');
+      expect(log.summary).toBe('Test summary');
+      expect(log.createdAt).toBeDefined();
+    });
+
+    it('should get log by id', () => {
+      const created = db.createLog({ date: '2024-01-15' });
+      const retrieved = db.getLogById(created.id);
+
+      expect(retrieved).not.toBeNull();
+      expect(retrieved!.id).toBe(created.id);
+    });
+
+    it('should return null for non-existent log', () => {
+      const result = db.getLogById(999);
+      expect(result).toBeNull();
+    });
+
+    it('should get all logs with pagination', () => {
+      db.createLog({ date: '2024-01-15' });
+      db.createLog({ date: '2024-01-16' });
+      db.createLog({ date: '2024-01-17' });
+
+      const allLogs = db.getAllLogs();
+      expect(allLogs.length).toBe(3);
+
+      const limitedLogs = db.getAllLogs({ limit: 2 });
+      expect(limitedLogs.length).toBe(2);
+
+      const offsetLogs = db.getAllLogs({ limit: 2, offset: 1 });
+      expect(offsetLogs.length).toBe(2);
+    });
+
+    it('should get logs by date range', () => {
+      db.createLog({ date: '2024-01-10' });
+      db.createLog({ date: '2024-01-15' });
+      db.createLog({ date: '2024-01-20' });
+
+      const logs = db.getLogsByDateRange(
+        new Date('2024-01-12'),
+        new Date('2024-01-18')
+      );
+
+      expect(logs.length).toBe(1);
+      expect(logs[0].date).toBe('2024-01-15');
+    });
+
+    it('should delete a log', () => {
+      const log = db.createLog({ date: '2024-01-15' });
+      db.deleteLog(log.id);
+
+      const result = db.getLogById(log.id);
+      expect(result).toBeNull();
+    });
+
+    it('should throw NotFoundError when deleting non-existent log', () => {
+      expect(() => db.deleteLog(999)).toThrow(NotFoundError);
+    });
+
+    it('should throw ValidationError for missing date', () => {
+      expect(() => db.createLog({ date: '' })).toThrow(ValidationError);
+    });
+  });
+
+  // ============================================================================
+  // Todo Tests
+  // ============================================================================
+
+  describe('Todos', () => {
+    let logId: number;
+
+    beforeEach(() => {
+      const log = db.createLog({ date: '2024-01-15' });
+      logId = log.id;
+    });
+
+    it('should create a todo', () => {
+      const todoData: CreateTodoInput = {
+        logId,
+        text: 'Test todo',
+        priority: 1,
+      };
+
+      const todo = db.createTodo(todoData);
+
+      expect(todo.id).toBeDefined();
+      expect(todo.logId).toBe(logId);
+      expect(todo.text).toBe('Test todo');
+      expect(todo.priority).toBe(1);
+      expect(todo.completed).toBe(false);
+    });
+
+    it('should get todo by id', () => {
+      const created = db.createTodo({ logId, text: 'Test' });
+      const retrieved = db.getTodoById(created.id);
+
+      expect(retrieved).not.toBeNull();
+      expect(retrieved!.id).toBe(created.id);
+    });
+
+    it('should get todos by log id', () => {
+      db.createTodo({ logId, text: 'Todo 1' });
+      db.createTodo({ logId, text: 'Todo 2' });
+
+      const todos = db.getTodosByLogId(logId);
+      expect(todos.length).toBe(2);
+    });
+
+    it('should get all todos filtered by completed status', () => {
+      db.createTodo({ logId, text: 'Todo 1', completed: false });
+      db.createTodo({ logId, text: 'Todo 2', completed: true });
+
+      const incompleteTodos = db.getAllTodos({ completed: false });
+      expect(incompleteTodos.length).toBe(1);
+      expect(incompleteTodos[0].text).toBe('Todo 1');
+
+      const completedTodos = db.getAllTodos({ completed: true });
+      expect(completedTodos.length).toBe(1);
+      expect(completedTodos[0].text).toBe('Todo 2');
+    });
+
+    it('should update a todo', () => {
+      const todo = db.createTodo({ logId, text: 'Original' });
+
+      const updated = db.updateTodo(todo.id, {
+        text: 'Updated',
+        completed: true,
+        priority: 1,
       });
-    }
+
+      expect(updated.text).toBe('Updated');
+      expect(updated.completed).toBe(true);
+      expect(updated.priority).toBe(1);
+    });
+
+    it('should delete a todo', () => {
+      const todo = db.createTodo({ logId, text: 'Test' });
+      db.deleteTodo(todo.id);
+
+      const result = db.getTodoById(todo.id);
+      expect(result).toBeNull();
+    });
+
+    it('should cascade delete todos when log is deleted', () => {
+      db.createTodo({ logId, text: 'Todo 1' });
+      db.createTodo({ logId, text: 'Todo 2' });
+
+      db.deleteLog(logId);
+
+      const todos = db.getTodosByLogId(logId);
+      expect(todos.length).toBe(0);
+    });
   });
 
-  describe('Indexes exist', () => {
-    const expectedIndexes = [
-      'idx_logs_timestamp',
-      'idx_todos_log_id',
-      'idx_todos_completed',
-      'idx_ideas_log_id',
-      'idx_ideas_status',
-      'idx_learnings_log_id',
-      'idx_accomplishments_log_id',
-      'idx_summaries_week',
-    ];
+  // ============================================================================
+  // Idea Tests
+  // ============================================================================
 
-    for (const index of expectedIndexes) {
-      it(`should have ${index} index`, () => {
-        const result = db.prepare(
-          "SELECT name FROM sqlite_master WHERE type='index' AND name=?"
-        ).get(index) as { name: string } | undefined;
-        expect(result).toBeDefined();
-        expect(result?.name).toBe(index);
+  describe('Ideas', () => {
+    let logId: number;
+
+    beforeEach(() => {
+      const log = db.createLog({ date: '2024-01-15' });
+      logId = log.id;
+    });
+
+    it('should create an idea', () => {
+      const ideaData: CreateIdeaInput = {
+        logId,
+        text: 'Test idea',
+        status: 'developing',
+        tags: ['tag1', 'tag2'],
+      };
+
+      const idea = db.createIdea(ideaData);
+
+      expect(idea.id).toBeDefined();
+      expect(idea.text).toBe('Test idea');
+      expect(idea.status).toBe('developing');
+      expect(idea.tags).toBe('["tag1","tag2"]');
+    });
+
+    it('should default idea status to raw', () => {
+      const idea = db.createIdea({ logId, text: 'Test' });
+      expect(idea.status).toBe('raw');
+    });
+
+    it('should get ideas by log id', () => {
+      db.createIdea({ logId, text: 'Idea 1' });
+      db.createIdea({ logId, text: 'Idea 2' });
+
+      const ideas = db.getIdeasByLogId(logId);
+      expect(ideas.length).toBe(2);
+    });
+
+    it('should get all ideas filtered by status', () => {
+      db.createIdea({ logId, text: 'Idea 1', status: 'raw' });
+      db.createIdea({ logId, text: 'Idea 2', status: 'actionable' });
+
+      const actionableIdeas = db.getAllIdeas({ status: 'actionable' });
+      expect(actionableIdeas.length).toBe(1);
+      expect(actionableIdeas[0].text).toBe('Idea 2');
+    });
+
+    it('should update an idea', () => {
+      const idea = db.createIdea({ logId, text: 'Original' });
+
+      const updated = db.updateIdea(idea.id, {
+        text: 'Updated',
+        status: 'archived',
+        tags: ['new-tag'],
       });
-    }
+
+      expect(updated.text).toBe('Updated');
+      expect(updated.status).toBe('archived');
+      expect(updated.tags).toBe('["new-tag"]');
+    });
+
+    it('should delete an idea', () => {
+      const idea = db.createIdea({ logId, text: 'Test' });
+      db.deleteIdea(idea.id);
+
+      const result = db.getIdeaById(idea.id);
+      expect(result).toBeNull();
+    });
   });
 
-  describe('Logs table', () => {
-    it('should insert a log entry', () => {
-      const stmt = db.prepare(
-        'INSERT INTO logs (transcript, raw_analysis, audio_path, duration_seconds) VALUES (?, ?, ?, ?)'
+  // ============================================================================
+  // Learning Tests
+  // ============================================================================
+
+  describe('Learnings', () => {
+    let logId: number;
+
+    beforeEach(() => {
+      const log = db.createLog({ date: '2024-01-15' });
+      logId = log.id;
+    });
+
+    it('should create a learning', () => {
+      const learningData: CreateLearningInput = {
+        logId,
+        text: 'Learned something new',
+        category: 'programming',
+      };
+
+      const learning = db.createLearning(learningData);
+
+      expect(learning.id).toBeDefined();
+      expect(learning.text).toBe('Learned something new');
+      expect(learning.category).toBe('programming');
+    });
+
+    it('should get learnings by log id', () => {
+      db.createLearning({ logId, text: 'Learning 1' });
+      db.createLearning({ logId, text: 'Learning 2' });
+
+      const learnings = db.getLearningsByLogId(logId);
+      expect(learnings.length).toBe(2);
+    });
+
+    it('should get all learnings', () => {
+      db.createLearning({ logId, text: 'Learning 1' });
+      db.createLearning({ logId, text: 'Learning 2' });
+
+      const learnings = db.getAllLearnings();
+      expect(learnings.length).toBe(2);
+    });
+
+    it('should delete a learning', () => {
+      const learning = db.createLearning({ logId, text: 'Test' });
+      db.deleteLearning(learning.id);
+
+      const result = db.getLearningById(learning.id);
+      expect(result).toBeNull();
+    });
+  });
+
+  // ============================================================================
+  // Accomplishment Tests
+  // ============================================================================
+
+  describe('Accomplishments', () => {
+    let logId: number;
+
+    beforeEach(() => {
+      const log = db.createLog({ date: '2024-01-15' });
+      logId = log.id;
+    });
+
+    it('should create an accomplishment', () => {
+      const accomplishmentData: CreateAccomplishmentInput = {
+        logId,
+        text: 'Completed feature',
+        impact: 'high',
+      };
+
+      const accomplishment = db.createAccomplishment(accomplishmentData);
+
+      expect(accomplishment.id).toBeDefined();
+      expect(accomplishment.text).toBe('Completed feature');
+      expect(accomplishment.impact).toBe('high');
+    });
+
+    it('should default accomplishment impact to medium', () => {
+      const accomplishment = db.createAccomplishment({ logId, text: 'Test' });
+      expect(accomplishment.impact).toBe('medium');
+    });
+
+    it('should get accomplishments by log id', () => {
+      db.createAccomplishment({ logId, text: 'Accomplishment 1' });
+      db.createAccomplishment({ logId, text: 'Accomplishment 2' });
+
+      const accomplishments = db.getAccomplishmentsByLogId(logId);
+      expect(accomplishments.length).toBe(2);
+    });
+
+    it('should get all accomplishments', () => {
+      db.createAccomplishment({ logId, text: 'Accomplishment 1' });
+      db.createAccomplishment({ logId, text: 'Accomplishment 2' });
+
+      const accomplishments = db.getAllAccomplishments();
+      expect(accomplishments.length).toBe(2);
+    });
+
+    it('should delete an accomplishment', () => {
+      const accomplishment = db.createAccomplishment({ logId, text: 'Test' });
+      db.deleteAccomplishment(accomplishment.id);
+
+      const result = db.getAccomplishmentById(accomplishment.id);
+      expect(result).toBeNull();
+    });
+  });
+
+  // ============================================================================
+  // Summary Tests
+  // ============================================================================
+
+  describe('Summaries', () => {
+    it('should create a summary', () => {
+      const summaryData: CreateSummaryInput = {
+        weekStart: '2024-01-15',
+        weekEnd: '2024-01-21',
+        content: 'Weekly summary content',
+        highlights: ['highlight 1', 'highlight 2'],
+      };
+
+      const summary = db.createSummary(summaryData);
+
+      expect(summary.id).toBeDefined();
+      expect(summary.weekStart).toBe('2024-01-15');
+      expect(summary.weekEnd).toBe('2024-01-21');
+      expect(summary.content).toBe('Weekly summary content');
+      expect(summary.highlights).toBe('["highlight 1","highlight 2"]');
+    });
+
+    it('should get summary by week', () => {
+      db.createSummary({
+        weekStart: '2024-01-15',
+        weekEnd: '2024-01-21',
+        content: 'Summary content',
+      });
+
+      const summary = db.getSummaryByWeek(new Date('2024-01-15'));
+
+      expect(summary).not.toBeNull();
+      expect(summary!.weekStart).toBe('2024-01-15');
+    });
+
+    it('should return null for non-existent week summary', () => {
+      const summary = db.getSummaryByWeek(new Date('2024-01-15'));
+      expect(summary).toBeNull();
+    });
+
+    it('should get all summaries', () => {
+      db.createSummary({
+        weekStart: '2024-01-08',
+        weekEnd: '2024-01-14',
+        content: 'Summary 1',
+      });
+      db.createSummary({
+        weekStart: '2024-01-15',
+        weekEnd: '2024-01-21',
+        content: 'Summary 2',
+      });
+
+      const summaries = db.getAllSummaries();
+      expect(summaries.length).toBe(2);
+    });
+
+    it('should delete a summary', () => {
+      const summary = db.createSummary({
+        weekStart: '2024-01-15',
+        weekEnd: '2024-01-21',
+        content: 'Summary content',
+      });
+
+      db.deleteSummary(summary.id);
+
+      const result = db.getSummaryByWeek(new Date('2024-01-15'));
+      expect(result).toBeNull();
+    });
+  });
+
+  // ============================================================================
+  // Transaction Tests
+  // ============================================================================
+
+  describe('Transactions', () => {
+    it('should save log with all segments atomically', () => {
+      const result = db.saveLogWithSegments(
+        { date: '2024-01-15', transcript: 'Test transcript' },
+        {
+          todos: [
+            { logId: 0, text: 'Todo 1', priority: 1 },
+            { logId: 0, text: 'Todo 2', priority: 2 },
+          ],
+          ideas: [{ logId: 0, text: 'Idea 1', status: 'raw' }],
+          learnings: [{ logId: 0, text: 'Learning 1', category: 'tech' }],
+          accomplishments: [{ logId: 0, text: 'Done 1', impact: 'high' }],
+        }
       );
-      const result = stmt.run('Test transcript', '{"items": []}', '/path/to/audio.wav', 120);
-      expect(result.changes).toBe(1);
-      expect(result.lastInsertRowid).toBeGreaterThan(0);
+
+      expect(result.id).toBeDefined();
+      expect(result.todos.length).toBe(2);
+      expect(result.ideas.length).toBe(1);
+      expect(result.learnings.length).toBe(1);
+      expect(result.accomplishments.length).toBe(1);
+
+      // Verify all segments have correct logId
+      expect(result.todos[0].logId).toBe(result.id);
+      expect(result.ideas[0].logId).toBe(result.id);
+      expect(result.learnings[0].logId).toBe(result.id);
+      expect(result.accomplishments[0].logId).toBe(result.id);
     });
 
-    it('should auto-generate timestamp', () => {
-      const stmt = db.prepare('INSERT INTO logs (transcript) VALUES (?)');
-      const result = stmt.run('Auto timestamp test');
-
-      const log = db.prepare('SELECT * FROM logs WHERE id = ?').get(result.lastInsertRowid) as {
-        id: number;
-        timestamp: string;
-        transcript: string;
-      };
-      expect(log.timestamp).toBeDefined();
-      expect(log.transcript).toBe('Auto timestamp test');
-    });
-  });
-
-  describe('Todos table', () => {
-    let logId: number;
-
-    beforeAll(() => {
-      const stmt = db.prepare('INSERT INTO logs (transcript) VALUES (?)');
-      const result = stmt.run('Log for todos test');
-      logId = result.lastInsertRowid as number;
-    });
-
-    it('should insert a todo with default values', () => {
-      const stmt = db.prepare('INSERT INTO todos (log_id, text) VALUES (?, ?)');
-      const result = stmt.run(logId, 'Test todo item');
-
-      const todo = db.prepare('SELECT * FROM todos WHERE id = ?').get(result.lastInsertRowid) as {
-        id: number;
-        log_id: number;
-        text: string;
-        completed: number;
-        priority: string;
-        user_reclassified: number;
-      };
-
-      expect(todo.completed).toBe(0); // Default false
-      expect(todo.priority).toBe('medium'); // Default medium
-      expect(todo.user_reclassified).toBe(0); // Default false
-    });
-
-    it('should insert a todo with custom priority', () => {
-      const stmt = db.prepare('INSERT INTO todos (log_id, text, priority, confidence) VALUES (?, ?, ?, ?)');
-      const result = stmt.run(logId, 'High priority todo', 'high', 0.95);
-
-      const todo = db.prepare('SELECT * FROM todos WHERE id = ?').get(result.lastInsertRowid) as {
-        priority: string;
-        confidence: number;
-      };
-
-      expect(todo.priority).toBe('high');
-      expect(todo.confidence).toBeCloseTo(0.95);
-    });
-
-    it('should update todo completion status', () => {
-      const insertStmt = db.prepare('INSERT INTO todos (log_id, text) VALUES (?, ?)');
-      const insertResult = insertStmt.run(logId, 'Todo to complete');
-
-      const updateStmt = db.prepare('UPDATE todos SET completed = 1 WHERE id = ?');
-      updateStmt.run(insertResult.lastInsertRowid);
-
-      const todo = db.prepare('SELECT completed FROM todos WHERE id = ?').get(insertResult.lastInsertRowid) as {
-        completed: number;
-      };
-
-      expect(todo.completed).toBe(1);
-    });
-  });
-
-  describe('Ideas table', () => {
-    let logId: number;
-
-    beforeAll(() => {
-      const stmt = db.prepare('INSERT INTO logs (transcript) VALUES (?)');
-      const result = stmt.run('Log for ideas test');
-      logId = result.lastInsertRowid as number;
-    });
-
-    it('should insert an idea with default status', () => {
-      const stmt = db.prepare('INSERT INTO ideas (log_id, text, category) VALUES (?, ?, ?)');
-      const result = stmt.run(logId, 'Test idea', 'feature');
-
-      const idea = db.prepare('SELECT * FROM ideas WHERE id = ?').get(result.lastInsertRowid) as {
-        status: string;
-        category: string;
-        user_reclassified: number;
-      };
-
-      expect(idea.status).toBe('new'); // Default status
-      expect(idea.category).toBe('feature');
-      expect(idea.user_reclassified).toBe(0);
-    });
-
-    it('should update idea status', () => {
-      const insertStmt = db.prepare('INSERT INTO ideas (log_id, text) VALUES (?, ?)');
-      const insertResult = insertStmt.run(logId, 'Idea to review');
-
-      const updateStmt = db.prepare('UPDATE ideas SET status = ? WHERE id = ?');
-      updateStmt.run('reviewing', insertResult.lastInsertRowid);
-
-      const idea = db.prepare('SELECT status FROM ideas WHERE id = ?').get(insertResult.lastInsertRowid) as {
-        status: string;
-      };
-
-      expect(idea.status).toBe('reviewing');
-    });
-  });
-
-  describe('Learnings table', () => {
-    let logId: number;
-
-    beforeAll(() => {
-      const stmt = db.prepare('INSERT INTO logs (transcript) VALUES (?)');
-      const result = stmt.run('Log for learnings test');
-      logId = result.lastInsertRowid as number;
-    });
-
-    it('should insert a learning with topic', () => {
-      const stmt = db.prepare('INSERT INTO learnings (log_id, text, topic, confidence) VALUES (?, ?, ?, ?)');
-      const result = stmt.run(logId, 'TIL about SQLite', 'databases', 0.87);
-
-      const learning = db.prepare('SELECT * FROM learnings WHERE id = ?').get(result.lastInsertRowid) as {
-        text: string;
-        topic: string;
-        confidence: number;
-      };
-
-      expect(learning.text).toBe('TIL about SQLite');
-      expect(learning.topic).toBe('databases');
-      expect(learning.confidence).toBeCloseTo(0.87);
-    });
-  });
-
-  describe('Accomplishments table', () => {
-    let logId: number;
-
-    beforeAll(() => {
-      const stmt = db.prepare('INSERT INTO logs (transcript) VALUES (?)');
-      const result = stmt.run('Log for accomplishments test');
-      logId = result.lastInsertRowid as number;
-    });
-
-    it('should insert an accomplishment', () => {
-      const stmt = db.prepare('INSERT INTO accomplishments (log_id, text, confidence) VALUES (?, ?, ?)');
-      const result = stmt.run(logId, 'Finished the database schema', 0.92);
-
-      const accomplishment = db.prepare('SELECT * FROM accomplishments WHERE id = ?').get(result.lastInsertRowid) as {
-        text: string;
-        confidence: number;
-        created_at: string;
-      };
-
-      expect(accomplishment.text).toBe('Finished the database schema');
-      expect(accomplishment.confidence).toBeCloseTo(0.92);
-      expect(accomplishment.created_at).toBeDefined();
-    });
-  });
-
-  describe('Summaries table', () => {
-    it('should insert a weekly summary', () => {
-      const stmt = db.prepare(
-        'INSERT INTO summaries (week_start, week_end, content, highlights, stats) VALUES (?, ?, ?, ?, ?)'
-      );
-      const result = stmt.run(
-        '2024-01-08',
-        '2024-01-14',
-        'This week I focused on database design...',
-        'Completed SQLite schema, Started testing',
-        '{"todos_completed": 5, "ideas_captured": 3}'
+    it('should get log with all segments', () => {
+      const saved = db.saveLogWithSegments(
+        { date: '2024-01-15' },
+        {
+          todos: [{ logId: 0, text: 'Todo 1' }],
+          ideas: [{ logId: 0, text: 'Idea 1' }],
+        }
       );
 
-      const summary = db.prepare('SELECT * FROM summaries WHERE id = ?').get(result.lastInsertRowid) as {
-        week_start: string;
-        week_end: string;
-        content: string;
-        highlights: string;
-        stats: string;
-      };
+      const retrieved = db.getLogWithSegments(saved.id);
 
-      expect(summary.week_start).toBe('2024-01-08');
-      expect(summary.week_end).toBe('2024-01-14');
-      expect(summary.content).toContain('database design');
-      expect(JSON.parse(summary.stats)).toEqual({ todos_completed: 5, ideas_captured: 3 });
+      expect(retrieved).not.toBeNull();
+      expect(retrieved!.todos.length).toBe(1);
+      expect(retrieved!.ideas.length).toBe(1);
+      expect(retrieved!.learnings.length).toBe(0);
+      expect(retrieved!.accomplishments.length).toBe(0);
     });
-  });
 
-  describe('Foreign key constraints', () => {
-    it('should cascade delete related records when log is deleted', () => {
-      // Insert a log
-      const logStmt = db.prepare('INSERT INTO logs (transcript) VALUES (?)');
-      const logResult = logStmt.run('Log for cascade test');
-      const logId = logResult.lastInsertRowid as number;
-
-      // Insert related records
-      db.prepare('INSERT INTO todos (log_id, text) VALUES (?, ?)').run(logId, 'Todo 1');
-      db.prepare('INSERT INTO ideas (log_id, text) VALUES (?, ?)').run(logId, 'Idea 1');
-      db.prepare('INSERT INTO learnings (log_id, text) VALUES (?, ?)').run(logId, 'Learning 1');
-      db.prepare('INSERT INTO accomplishments (log_id, text) VALUES (?, ?)').run(logId, 'Accomplishment 1');
-
-      // Verify records exist
-      expect((db.prepare('SELECT COUNT(*) as c FROM todos WHERE log_id = ?').get(logId) as { c: number }).c).toBe(1);
-      expect((db.prepare('SELECT COUNT(*) as c FROM ideas WHERE log_id = ?').get(logId) as { c: number }).c).toBe(1);
-      expect((db.prepare('SELECT COUNT(*) as c FROM learnings WHERE log_id = ?').get(logId) as { c: number }).c).toBe(1);
-      expect((db.prepare('SELECT COUNT(*) as c FROM accomplishments WHERE log_id = ?').get(logId) as { c: number }).c).toBe(1);
-
-      // Delete the log
-      db.prepare('DELETE FROM logs WHERE id = ?').run(logId);
-
-      // Verify cascade delete
-      expect((db.prepare('SELECT COUNT(*) as c FROM todos WHERE log_id = ?').get(logId) as { c: number }).c).toBe(0);
-      expect((db.prepare('SELECT COUNT(*) as c FROM ideas WHERE log_id = ?').get(logId) as { c: number }).c).toBe(0);
-      expect((db.prepare('SELECT COUNT(*) as c FROM learnings WHERE log_id = ?').get(logId) as { c: number }).c).toBe(0);
-      expect((db.prepare('SELECT COUNT(*) as c FROM accomplishments WHERE log_id = ?').get(logId) as { c: number }).c).toBe(0);
+    it('should return null for non-existent log with segments', () => {
+      const result = db.getLogWithSegments(999);
+      expect(result).toBeNull();
     });
   });
 });

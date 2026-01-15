@@ -1,73 +1,196 @@
 /**
- * Database type definitions for Daily Thought Logger
+ * Database types for Daily Thought Logger
+ * AI-10: DatabaseService with CRUD for all tables
  */
+
+// ============================================================================
+// Base Entity Types (returned from database)
+// ============================================================================
 
 export interface Log {
   id: number;
-  timestamp: string;
-  transcript: string;
-  raw_analysis: string | null;
-  audio_path: string | null;
-  duration_seconds: number | null;
-}
-
-export interface Accomplishment {
-  id: number;
-  log_id: number;
-  text: string;
-  confidence: number | null;
-  created_at: string;
+  date: string; // ISO 8601 date string
+  audioPath: string | null;
+  transcript: string | null;
+  summary: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface Todo {
   id: number;
-  log_id: number;
+  logId: number;
   text: string;
   completed: boolean;
-  priority: 'low' | 'medium' | 'high';
-  confidence: number | null;
-  user_reclassified: boolean;
-  created_at: string;
+  dueDate: string | null;
+  priority: number; // 1 = high, 2 = medium, 3 = low
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface Idea {
   id: number;
-  log_id: number;
+  logId: number;
   text: string;
-  status: 'new' | 'reviewing' | 'implemented' | 'archived';
-  category: string | null;
-  confidence: number | null;
-  user_reclassified: boolean;
-  created_at: string;
+  status: IdeaStatus;
+  tags: string | null; // JSON array stored as string
+  createdAt: string;
+  updatedAt: string;
 }
+
+export type IdeaStatus = 'raw' | 'developing' | 'actionable' | 'archived';
 
 export interface Learning {
   id: number;
-  log_id: number;
+  logId: number;
   text: string;
-  topic: string | null;
-  confidence: number | null;
-  created_at: string;
+  category: string | null;
+  createdAt: string;
 }
+
+export interface Accomplishment {
+  id: number;
+  logId: number;
+  text: string;
+  impact: AccomplishmentImpact;
+  createdAt: string;
+}
+
+export type AccomplishmentImpact = 'low' | 'medium' | 'high';
 
 export interface Summary {
   id: number;
-  week_start: string;
-  week_end: string;
+  weekStart: string; // ISO 8601 date for start of week
+  weekEnd: string;
   content: string;
-  highlights: string | null;
-  stats: string | null;
-  created_at: string;
+  highlights: string | null; // JSON array stored as string
+  generatedAt: string;
 }
 
-// Input types for creating new records (omit auto-generated fields)
-export type CreateLog = Omit<Log, 'id' | 'timestamp'>;
-export type CreateAccomplishment = Omit<Accomplishment, 'id' | 'created_at'>;
-export type CreateTodo = Omit<Todo, 'id' | 'created_at' | 'completed' | 'user_reclassified'>;
-export type CreateIdea = Omit<Idea, 'id' | 'created_at' | 'status' | 'user_reclassified'>;
-export type CreateLearning = Omit<Learning, 'id' | 'created_at'>;
-export type CreateSummary = Omit<Summary, 'id' | 'created_at'>;
+// ============================================================================
+// Input Types (for creating/updating entities)
+// ============================================================================
 
-// Update types for modifying existing records
-export type UpdateTodo = Partial<Pick<Todo, 'text' | 'completed' | 'priority' | 'user_reclassified'>>;
-export type UpdateIdea = Partial<Pick<Idea, 'text' | 'status' | 'category' | 'user_reclassified'>>;
+export interface CreateLogInput {
+  date: string;
+  audioPath?: string | null;
+  transcript?: string | null;
+  summary?: string | null;
+}
+
+export interface UpdateLogInput {
+  audioPath?: string | null;
+  transcript?: string | null;
+  summary?: string | null;
+}
+
+export interface CreateTodoInput {
+  logId: number;
+  text: string;
+  completed?: boolean;
+  dueDate?: string | null;
+  priority?: number;
+}
+
+export interface UpdateTodoInput {
+  text?: string;
+  completed?: boolean;
+  dueDate?: string | null;
+  priority?: number;
+}
+
+export interface CreateIdeaInput {
+  logId: number;
+  text: string;
+  status?: IdeaStatus;
+  tags?: string[];
+}
+
+export interface UpdateIdeaInput {
+  text?: string;
+  status?: IdeaStatus;
+  tags?: string[];
+}
+
+export interface CreateLearningInput {
+  logId: number;
+  text: string;
+  category?: string | null;
+}
+
+export interface CreateAccomplishmentInput {
+  logId: number;
+  text: string;
+  impact?: AccomplishmentImpact;
+}
+
+export interface CreateSummaryInput {
+  weekStart: string;
+  weekEnd: string;
+  content: string;
+  highlights?: string[];
+}
+
+// ============================================================================
+// Composite Types (for transactions)
+// ============================================================================
+
+export interface LogSegments {
+  todos?: CreateTodoInput[];
+  ideas?: CreateIdeaInput[];
+  learnings?: CreateLearningInput[];
+  accomplishments?: CreateAccomplishmentInput[];
+}
+
+export interface LogWithSegments extends Log {
+  todos: Todo[];
+  ideas: Idea[];
+  learnings: Learning[];
+  accomplishments: Accomplishment[];
+}
+
+// ============================================================================
+// Query Options
+// ============================================================================
+
+export interface PaginationOptions {
+  limit?: number;
+  offset?: number;
+}
+
+export interface TodoQueryOptions extends PaginationOptions {
+  completed?: boolean;
+}
+
+export interface IdeaQueryOptions extends PaginationOptions {
+  status?: IdeaStatus;
+}
+
+// ============================================================================
+// Database Error Types
+// ============================================================================
+
+export class DatabaseError extends Error {
+  constructor(
+    message: string,
+    public readonly code: string,
+    public readonly cause?: Error
+  ) {
+    super(message);
+    this.name = 'DatabaseError';
+  }
+}
+
+export class NotFoundError extends DatabaseError {
+  constructor(entity: string, id: number | string) {
+    super(`${entity} with id ${id} not found`, 'NOT_FOUND');
+    this.name = 'NotFoundError';
+  }
+}
+
+export class ValidationError extends DatabaseError {
+  constructor(message: string) {
+    super(message, 'VALIDATION_ERROR');
+    this.name = 'ValidationError';
+  }
+}

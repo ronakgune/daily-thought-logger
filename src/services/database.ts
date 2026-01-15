@@ -1,759 +1,1140 @@
 /**
- * Database service for Daily Thought Logger
- * Provides CRUD operations for all tables
+ * DatabaseService - CRUD operations for Daily Thought Logger
+ * AI-10: Create DatabaseService with CRUD for all tables
+ *
+ * Uses better-sqlite3 for synchronous SQLite operations in Electron main process.
+ * All methods are synchronous as better-sqlite3 is synchronous by design.
  */
 
-import { getDatabase } from './database-init';
-import type {
+import Database, { Database as DatabaseType } from 'better-sqlite3';
+import { app } from 'electron';
+import * as path from 'path';
+
+import { CREATE_TABLES_SQL, SCHEMA_VERSION } from '../database/schema';
+import {
   Log,
-  Accomplishment,
   Todo,
   Idea,
   Learning,
+  Accomplishment,
   Summary,
-  CreateLog,
-  CreateAccomplishment,
-  CreateTodo,
-  CreateIdea,
-  CreateLearning,
-  CreateSummary,
-  UpdateTodo,
-  UpdateIdea,
+  CreateLogInput,
+  UpdateLogInput,
+  CreateTodoInput,
+  UpdateTodoInput,
+  CreateIdeaInput,
+  UpdateIdeaInput,
+  CreateLearningInput,
+  CreateAccomplishmentInput,
+  CreateSummaryInput,
+  LogSegments,
+  LogWithSegments,
+  PaginationOptions,
+  TodoQueryOptions,
+  IdeaQueryOptions,
+  DatabaseError,
+  NotFoundError,
+  ValidationError,
+  IdeaStatus,
 } from '../types/database';
 
-// ============================================
-// Helper functions
-// ============================================
-
 /**
- * Convert SQLite boolean (0/1) to JavaScript boolean
+ * Row types as returned from SQLite (snake_case)
  */
-function convertBoolean(value: number | boolean): boolean {
-  return value === 1 || value === true;
+interface LogRow {
+  id: number;
+  date: string;
+  audio_path: string | null;
+  transcript: string | null;
+  summary: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface TodoRow {
+  id: number;
+  log_id: number;
+  text: string;
+  completed: number;
+  due_date: string | null;
+  priority: number;
+  created_at: string;
+  updated_at: string;
+}
+
+interface IdeaRow {
+  id: number;
+  log_id: number;
+  text: string;
+  status: IdeaStatus;
+  tags: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface LearningRow {
+  id: number;
+  log_id: number;
+  text: string;
+  category: string | null;
+  created_at: string;
+}
+
+interface AccomplishmentRow {
+  id: number;
+  log_id: number;
+  text: string;
+  impact: string;
+  created_at: string;
+}
+
+interface SummaryRow {
+  id: number;
+  week_start: string;
+  week_end: string;
+  content: string;
+  highlights: string | null;
+  generated_at: string;
 }
 
 /**
- * Convert database row with boolean fields for Todo
+ * DatabaseService provides CRUD operations for all Daily Thought Logger entities.
+ *
+ * Usage:
+ * ```typescript
+ * const db = new DatabaseService();
+ * const log = db.createLog({ date: '2024-01-15' });
+ * const todos = db.getTodosByLogId(log.id);
+ * ```
  */
-function convertTodoRow(row: any): Todo {
-  return {
-    ...row,
-    completed: convertBoolean(row.completed),
-    user_reclassified: convertBoolean(row.user_reclassified),
-  };
-}
+export class DatabaseService {
+  private db: DatabaseType;
 
-/**
- * Convert database row with boolean fields for Idea
- */
-function convertIdeaRow(row: any): Idea {
-  return {
-    ...row,
-    user_reclassified: convertBoolean(row.user_reclassified),
-  };
-}
+  /**
+   * Creates a new DatabaseService instance.
+   * @param dbPath - Optional custom path for the database file.
+   *                 Defaults to user data directory in production.
+   */
+  constructor(dbPath?: string) {
+    const defaultPath = this.getDefaultDatabasePath();
+    const resolvedPath = dbPath ?? defaultPath;
 
-class DatabaseError extends Error {
-  constructor(message: string, public readonly operation: string) {
-    super(message);
-    this.name = 'DatabaseError';
+    try {
+      this.db = new Database(resolvedPath);
+      this.db.pragma('journal_mode = WAL');
+      this.db.pragma('foreign_keys = ON');
+      this.initializeSchema();
+    } catch (error) {
+      throw new DatabaseError(
+        `Failed to initialize database at ${resolvedPath}`,
+        'INIT_ERROR',
+        error as Error
+      );
+    }
   }
-}
 
-// ============================================
-// Logs
-// ============================================
+  /**
+   * Gets the default database path based on Electron's user data directory.
+   */
+  private getDefaultDatabasePath(): string {
+    // In test/development without Electron, use a temp path
+    if (typeof app === 'undefined' || !app.getPath) {
+      return ':memory:';
+    }
+    const userDataPath = app.getPath('userData');
+    return path.join(userDataPath, 'daily-thought-logger.db');
+  }
 
-export function createLog(data: CreateLog): Log {
-  try {
-    const db = getDatabase();
-    const stmt = db.prepare(`
-      INSERT INTO logs (transcript, raw_analysis, audio_path, duration_seconds)
-      VALUES (?, ?, ?, ?)
-    `);
-    const result = stmt.run(
-      data.transcript,
-      data.raw_analysis,
-      data.audio_path,
-      data.duration_seconds
-    );
-    const log = getLogById(result.lastInsertRowid as number);
+  /**
+   * Initializes the database schema if not already present.
+   */
+  private initializeSchema(): void {
+    const versionRow = this.db
+      .prepare('SELECT name FROM sqlite_master WHERE type="table" AND name="schema_version"')
+      .get() as { name: string } | undefined;
+
+    if (!versionRow) {
+      this.db.exec(CREATE_TABLES_SQL);
+      this.db
+        .prepare('INSERT INTO schema_version (version) VALUES (?)')
+        .run(SCHEMA_VERSION);
+    }
+  }
+
+  /**
+   * Closes the database connection.
+   */
+  close(): void {
+    this.db.close();
+  }
+
+  // ============================================================================
+  // Validation Helpers
+  // ============================================================================
+
+  /**
+   * Validates ISO 8601 date format (YYYY-MM-DD).
+   */
+  private validateDateFormat(date: string, fieldName: string): void {
+    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+    if (!dateRegex.test(date)) {
+      throw new ValidationError(
+        `${fieldName} must be in ISO 8601 format (YYYY-MM-DD), got: ${date}`
+      );
+    }
+  }
+
+  /**
+   * Validates text length limits.
+   */
+  private validateTextLength(
+    text: string,
+    fieldName: string,
+    maxLength: number
+  ): void {
+    if (text.length > maxLength) {
+      throw new ValidationError(
+        `${fieldName} exceeds maximum length of ${maxLength} characters (got ${text.length})`
+      );
+    }
+  }
+
+  /**
+   * Validates that a log exists before creating child records.
+   */
+  private validateLogExists(logId: number): void {
+    const log = this.getLogById(logId);
     if (!log) {
-      throw new DatabaseError('Failed to retrieve created log', 'createLog');
+      throw new ValidationError(`Log with id ${logId} does not exist`);
     }
-    return log;
-  } catch (error) {
-    if (error instanceof DatabaseError) {
-      throw error;
+  }
+
+  /**
+   * Safely parses JSON with fallback to empty array.
+   */
+  private safeJsonParse(jsonString: string | null): string[] {
+    if (!jsonString) {
+      return [];
     }
-    throw new DatabaseError(
-      `Failed to create log: ${error instanceof Error ? error.message : String(error)}`,
-      'createLog'
-    );
-  }
-}
-
-export function getLogById(id: number): Log | undefined {
-  try {
-    const db = getDatabase();
-    return db.prepare('SELECT * FROM logs WHERE id = ?').get(id) as Log | undefined;
-  } catch (error) {
-    throw new DatabaseError(
-      `Failed to get log by id: ${error instanceof Error ? error.message : String(error)}`,
-      'getLogById'
-    );
-  }
-}
-
-export function getAllLogs(limit = 100, offset = 0): Log[] {
-  try {
-    const db = getDatabase();
-    return db.prepare('SELECT * FROM logs ORDER BY timestamp DESC LIMIT ? OFFSET ?').all(limit, offset) as Log[];
-  } catch (error) {
-    throw new DatabaseError(
-      `Failed to get all logs: ${error instanceof Error ? error.message : String(error)}`,
-      'getAllLogs'
-    );
-  }
-}
-
-export function getLogsByDateRange(startDate: string, endDate: string): Log[] {
-  try {
-    const db = getDatabase();
-    return db.prepare(`
-      SELECT * FROM logs
-      WHERE timestamp >= ? AND timestamp <= ?
-      ORDER BY timestamp DESC
-    `).all(startDate, endDate) as Log[];
-  } catch (error) {
-    throw new DatabaseError(
-      `Failed to get logs by date range: ${error instanceof Error ? error.message : String(error)}`,
-      'getLogsByDateRange'
-    );
-  }
-}
-
-export function deleteLog(id: number): boolean {
-  try {
-    const db = getDatabase();
-    const result = db.prepare('DELETE FROM logs WHERE id = ?').run(id);
-    return result.changes > 0;
-  } catch (error) {
-    throw new DatabaseError(
-      `Failed to delete log: ${error instanceof Error ? error.message : String(error)}`,
-      'deleteLog'
-    );
-  }
-}
-
-// ============================================
-// Accomplishments
-// ============================================
-
-export function createAccomplishment(data: CreateAccomplishment): Accomplishment {
-  try {
-    const db = getDatabase();
-    const stmt = db.prepare(`
-      INSERT INTO accomplishments (log_id, text, confidence)
-      VALUES (?, ?, ?)
-    `);
-    const result = stmt.run(data.log_id, data.text, data.confidence);
-    const accomplishment = getAccomplishmentById(result.lastInsertRowid as number);
-    if (!accomplishment) {
-      throw new DatabaseError('Failed to retrieve created accomplishment', 'createAccomplishment');
+    try {
+      const parsed = JSON.parse(jsonString);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (error) {
+      console.warn('Failed to parse JSON, returning empty array:', error);
+      return [];
     }
-    return accomplishment;
-  } catch (error) {
-    if (error instanceof DatabaseError) {
-      throw error;
+  }
+
+  /**
+   * Whitelist of allowed columns for dynamic updates.
+   */
+  private readonly ALLOWED_TODO_UPDATE_COLUMNS = new Set([
+    'text',
+    'completed',
+    'due_date',
+    'priority',
+  ]);
+
+  private readonly ALLOWED_IDEA_UPDATE_COLUMNS = new Set([
+    'text',
+    'status',
+    'tags',
+  ]);
+
+  private readonly ALLOWED_LOG_UPDATE_COLUMNS = new Set([
+    'audio_path',
+    'transcript',
+    'summary',
+  ]);
+
+  // ============================================================================
+  // Row Transformers (snake_case to camelCase)
+  // ============================================================================
+
+  private transformLogRow(row: LogRow): Log {
+    return {
+      id: row.id,
+      date: row.date,
+      audioPath: row.audio_path,
+      transcript: row.transcript,
+      summary: row.summary,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  private transformTodoRow(row: TodoRow): Todo {
+    return {
+      id: row.id,
+      logId: row.log_id,
+      text: row.text,
+      completed: Boolean(row.completed),
+      dueDate: row.due_date,
+      priority: row.priority,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  private transformIdeaRow(row: IdeaRow): Idea {
+    // Safely parse tags JSON with fallback
+    const tags = this.safeJsonParse(row.tags);
+    return {
+      id: row.id,
+      logId: row.log_id,
+      text: row.text,
+      status: row.status,
+      tags: tags.length > 0 ? JSON.stringify(tags) : null,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  private transformLearningRow(row: LearningRow): Learning {
+    return {
+      id: row.id,
+      logId: row.log_id,
+      text: row.text,
+      category: row.category,
+      createdAt: row.created_at,
+    };
+  }
+
+  private transformAccomplishmentRow(row: AccomplishmentRow): Accomplishment {
+    return {
+      id: row.id,
+      logId: row.log_id,
+      text: row.text,
+      impact: row.impact as Accomplishment['impact'],
+      createdAt: row.created_at,
+    };
+  }
+
+  private transformSummaryRow(row: SummaryRow): Summary {
+    // Safely parse highlights JSON with fallback
+    const highlights = this.safeJsonParse(row.highlights);
+    return {
+      id: row.id,
+      weekStart: row.week_start,
+      weekEnd: row.week_end,
+      content: row.content,
+      highlights: highlights.length > 0 ? JSON.stringify(highlights) : null,
+      generatedAt: row.generated_at,
+    };
+  }
+
+  // ============================================================================
+  // Log CRUD Operations
+  // ============================================================================
+
+  /**
+   * Creates a new log entry.
+   * @param data - The log data to create
+   * @returns The created log
+   */
+  createLog(data: CreateLogInput): Log {
+    if (!data.date) {
+      throw new ValidationError('Log date is required');
     }
-    throw new DatabaseError(
-      `Failed to create accomplishment: ${error instanceof Error ? error.message : String(error)}`,
-      'createAccomplishment'
-    );
-  }
-}
 
-export function getAccomplishmentById(id: number): Accomplishment | undefined {
-  try {
-    const db = getDatabase();
-    return db.prepare('SELECT * FROM accomplishments WHERE id = ?').get(id) as Accomplishment | undefined;
-  } catch (error) {
-    throw new DatabaseError(
-      `Failed to get accomplishment by id: ${error instanceof Error ? error.message : String(error)}`,
-      'getAccomplishmentById'
-    );
-  }
-}
+    // Validate date format
+    this.validateDateFormat(data.date, 'Log date');
 
-export function getAccomplishmentsByLogId(logId: number): Accomplishment[] {
-  try {
-    const db = getDatabase();
-    return db.prepare('SELECT * FROM accomplishments WHERE log_id = ? ORDER BY created_at DESC').all(logId) as Accomplishment[];
-  } catch (error) {
-    throw new DatabaseError(
-      `Failed to get accomplishments by log id: ${error instanceof Error ? error.message : String(error)}`,
-      'getAccomplishmentsByLogId'
-    );
-  }
-}
+    // Validate length limits
+    if (data.transcript) {
+      this.validateTextLength(data.transcript, 'Transcript', 10000);
+    }
+    if (data.summary) {
+      this.validateTextLength(data.summary, 'Summary', 10000);
+    }
 
-export function getAllAccomplishments(limit = 100, offset = 0): Accomplishment[] {
-  try {
-    const db = getDatabase();
-    return db.prepare('SELECT * FROM accomplishments ORDER BY created_at DESC LIMIT ? OFFSET ?').all(limit, offset) as Accomplishment[];
-  } catch (error) {
-    throw new DatabaseError(
-      `Failed to get all accomplishments: ${error instanceof Error ? error.message : String(error)}`,
-      'getAllAccomplishments'
-    );
-  }
-}
-
-export function deleteAccomplishment(id: number): boolean {
-  try {
-    const db = getDatabase();
-    const result = db.prepare('DELETE FROM accomplishments WHERE id = ?').run(id);
-    return result.changes > 0;
-  } catch (error) {
-    throw new DatabaseError(
-      `Failed to delete accomplishment: ${error instanceof Error ? error.message : String(error)}`,
-      'deleteAccomplishment'
-    );
-  }
-}
-
-// ============================================
-// Todos
-// ============================================
-
-export function createTodo(data: CreateTodo): Todo {
-  try {
-    const db = getDatabase();
-    const stmt = db.prepare(`
-      INSERT INTO todos (log_id, text, priority, confidence)
+    const stmt = this.db.prepare(`
+      INSERT INTO logs (date, audio_path, transcript, summary)
       VALUES (?, ?, ?, ?)
     `);
+
     const result = stmt.run(
-      data.log_id,
-      data.text,
-      data.priority || 'medium',
-      data.confidence
+      data.date,
+      data.audioPath ?? null,
+      data.transcript ?? null,
+      data.summary ?? null
     );
-    const todo = getTodoById(result.lastInsertRowid as number);
-    if (!todo) {
-      throw new DatabaseError('Failed to retrieve created todo', 'createTodo');
+
+    return this.getLogById(result.lastInsertRowid as number)!;
+  }
+
+  /**
+   * Gets a log by its ID.
+   * @param id - The log ID
+   * @returns The log or null if not found
+   */
+  getLogById(id: number): Log | null {
+    const row = this.db
+      .prepare('SELECT * FROM logs WHERE id = ?')
+      .get(id) as LogRow | undefined;
+
+    return row ? this.transformLogRow(row) : null;
+  }
+
+  /**
+   * Gets all logs with optional pagination.
+   * @param options - Pagination options
+   * @returns Array of logs
+   */
+  getAllLogs(options?: PaginationOptions): Log[] {
+    const limit = options?.limit ?? 100;
+    const offset = options?.offset ?? 0;
+
+    const rows = this.db
+      .prepare('SELECT * FROM logs ORDER BY date DESC LIMIT ? OFFSET ?')
+      .all(limit, offset) as LogRow[];
+
+    return rows.map((row) => this.transformLogRow(row));
+  }
+
+  /**
+   * Gets logs within a date range.
+   * @param start - Start date (inclusive)
+   * @param end - End date (inclusive)
+   * @returns Array of logs
+   */
+  getLogsByDateRange(start: Date, end: Date): Log[] {
+    const startStr = start.toISOString().split('T')[0];
+    const endStr = end.toISOString().split('T')[0];
+
+    const rows = this.db
+      .prepare('SELECT * FROM logs WHERE date >= ? AND date <= ? ORDER BY date ASC')
+      .all(startStr, endStr) as LogRow[];
+
+    return rows.map((row) => this.transformLogRow(row));
+  }
+
+  /**
+   * Updates a log entry.
+   * @param id - The log ID to update
+   * @param data - The update data
+   * @returns The updated log
+   */
+  updateLog(id: number, data: UpdateLogInput): Log {
+    const existing = this.getLogById(id);
+    if (!existing) {
+      throw new NotFoundError('Log', id);
     }
-    return todo;
-  } catch (error) {
-    if (error instanceof DatabaseError) {
-      throw error;
-    }
-    throw new DatabaseError(
-      `Failed to create todo: ${error instanceof Error ? error.message : String(error)}`,
-      'createTodo'
-    );
-  }
-}
 
-export function getTodoById(id: number): Todo | undefined {
-  try {
-    const db = getDatabase();
-    const row = db.prepare('SELECT * FROM todos WHERE id = ?').get(id);
-    return row ? convertTodoRow(row) : undefined;
-  } catch (error) {
-    throw new DatabaseError(
-      `Failed to get todo by id: ${error instanceof Error ? error.message : String(error)}`,
-      'getTodoById'
-    );
-  }
-}
-
-export function getTodosByLogId(logId: number): Todo[] {
-  try {
-    const db = getDatabase();
-    const rows = db.prepare('SELECT * FROM todos WHERE log_id = ? ORDER BY created_at DESC').all(logId);
-    return rows.map(convertTodoRow);
-  } catch (error) {
-    throw new DatabaseError(
-      `Failed to get todos by log id: ${error instanceof Error ? error.message : String(error)}`,
-      'getTodosByLogId'
-    );
-  }
-}
-
-export function getAllTodos(includeCompleted = false, limit = 100, offset = 0): Todo[] {
-  try {
-    const db = getDatabase();
-    let rows: any[];
-    if (includeCompleted) {
-      rows = db.prepare('SELECT * FROM todos ORDER BY completed ASC, created_at DESC LIMIT ? OFFSET ?').all(limit, offset);
-    } else {
-      rows = db.prepare('SELECT * FROM todos WHERE completed = 0 ORDER BY created_at DESC LIMIT ? OFFSET ?').all(limit, offset);
-    }
-    return rows.map(convertTodoRow);
-  } catch (error) {
-    throw new DatabaseError(
-      `Failed to get all todos: ${error instanceof Error ? error.message : String(error)}`,
-      'getAllTodos'
-    );
-  }
-}
-
-export function updateTodo(id: number, data: UpdateTodo): Todo | undefined {
-  try {
-    const db = getDatabase();
-
-    // Whitelist of allowed columns to prevent SQL injection
-    const allowedColumns = new Set(['text', 'completed', 'priority', 'user_reclassified']);
     const updates: string[] = [];
-    const values: (string | number)[] = [];
+    const params: (string | null)[] = [];
+
+    if (data.audioPath !== undefined) {
+      updates.push('audio_path = ?');
+      params.push(data.audioPath);
+    }
+    if (data.transcript !== undefined) {
+      if (data.transcript) {
+        this.validateTextLength(data.transcript, 'Transcript', 10000);
+      }
+      updates.push('transcript = ?');
+      params.push(data.transcript);
+    }
+    if (data.summary !== undefined) {
+      if (data.summary) {
+        this.validateTextLength(data.summary, 'Summary', 10000);
+      }
+      updates.push('summary = ?');
+      params.push(data.summary);
+    }
+
+    if (updates.length > 0) {
+      updates.push("updated_at = datetime('now')");
+      params.push(id);
+
+      this.db
+        .prepare(`UPDATE logs SET ${updates.join(', ')} WHERE id = ?`)
+        .run(...params);
+    }
+
+    return this.getLogById(id)!;
+  }
+
+  /**
+   * Deletes a log and all associated segments (cascades).
+   * @param id - The log ID to delete
+   */
+  deleteLog(id: number): void {
+    const result = this.db.prepare('DELETE FROM logs WHERE id = ?').run(id);
+
+    if (result.changes === 0) {
+      throw new NotFoundError('Log', id);
+    }
+  }
+
+  // ============================================================================
+  // Todo CRUD Operations
+  // ============================================================================
+
+  /**
+   * Creates a new todo item.
+   * @param data - The todo data to create
+   * @returns The created todo
+   */
+  createTodo(data: CreateTodoInput): Todo {
+    if (!data.text) {
+      throw new ValidationError('Todo text is required');
+    }
+
+    // Validate foreign key
+    this.validateLogExists(data.logId);
+
+    // Validate text length
+    this.validateTextLength(data.text, 'Todo text', 500);
+
+    // Validate due date format if provided
+    if (data.dueDate) {
+      this.validateDateFormat(data.dueDate, 'Todo due date');
+    }
+
+    const stmt = this.db.prepare(`
+      INSERT INTO todos (log_id, text, completed, due_date, priority)
+      VALUES (?, ?, ?, ?, ?)
+    `);
+
+    const result = stmt.run(
+      data.logId,
+      data.text,
+      data.completed ? 1 : 0,
+      data.dueDate ?? null,
+      data.priority ?? 2
+    );
+
+    return this.getTodoById(result.lastInsertRowid as number)!;
+  }
+
+  /**
+   * Gets a todo by its ID.
+   * @param id - The todo ID
+   * @returns The todo or null if not found
+   */
+  getTodoById(id: number): Todo | null {
+    const row = this.db
+      .prepare('SELECT * FROM todos WHERE id = ?')
+      .get(id) as TodoRow | undefined;
+
+    return row ? this.transformTodoRow(row) : null;
+  }
+
+  /**
+   * Gets all todos for a specific log.
+   * @param logId - The log ID
+   * @returns Array of todos
+   */
+  getTodosByLogId(logId: number): Todo[] {
+    const rows = this.db
+      .prepare('SELECT * FROM todos WHERE log_id = ? ORDER BY priority ASC, created_at ASC')
+      .all(logId) as TodoRow[];
+
+    return rows.map((row) => this.transformTodoRow(row));
+  }
+
+  /**
+   * Gets all todos with optional filtering.
+   * @param options - Query options
+   * @returns Array of todos
+   */
+  getAllTodos(options?: TodoQueryOptions): Todo[] {
+    const limit = options?.limit ?? 100;
+    const offset = options?.offset ?? 0;
+
+    let query = 'SELECT * FROM todos';
+    const params: (number | string)[] = [];
+
+    if (options?.completed !== undefined) {
+      query += ' WHERE completed = ?';
+      params.push(options.completed ? 1 : 0);
+    }
+
+    query += ' ORDER BY priority ASC, due_date ASC NULLS LAST, created_at ASC';
+    query += ' LIMIT ? OFFSET ?';
+    params.push(limit, offset);
+
+    const rows = this.db.prepare(query).all(...params) as TodoRow[];
+
+    return rows.map((row) => this.transformTodoRow(row));
+  }
+
+  /**
+   * Updates a todo item.
+   * @param id - The todo ID to update
+   * @param data - The update data
+   * @returns The updated todo
+   */
+  updateTodo(id: number, data: UpdateTodoInput): Todo {
+    const existing = this.getTodoById(id);
+    if (!existing) {
+      throw new NotFoundError('Todo', id);
+    }
+
+    const updates: string[] = [];
+    const params: (string | number | null)[] = [];
 
     if (data.text !== undefined) {
+      this.validateTextLength(data.text, 'Todo text', 500);
       updates.push('text = ?');
-      values.push(data.text);
+      params.push(data.text);
     }
     if (data.completed !== undefined) {
       updates.push('completed = ?');
-      values.push(data.completed ? 1 : 0);
+      params.push(data.completed ? 1 : 0);
+    }
+    if (data.dueDate !== undefined) {
+      if (data.dueDate) {
+        this.validateDateFormat(data.dueDate, 'Todo due date');
+      }
+      updates.push('due_date = ?');
+      params.push(data.dueDate);
     }
     if (data.priority !== undefined) {
-      // Validate priority value
-      if (!['low', 'medium', 'high'].includes(data.priority)) {
-        throw new DatabaseError('Invalid priority value', 'updateTodo');
-      }
       updates.push('priority = ?');
-      values.push(data.priority);
-    }
-    if (data.user_reclassified !== undefined) {
-      updates.push('user_reclassified = ?');
-      values.push(data.user_reclassified ? 1 : 0);
+      params.push(data.priority);
     }
 
-    if (updates.length === 0) {
-      return getTodoById(id);
+    if (updates.length > 0) {
+      updates.push("updated_at = datetime('now')");
+      params.push(id);
+
+      // Safe: updates array is built from controlled strings only
+      this.db
+        .prepare(`UPDATE todos SET ${updates.join(', ')} WHERE id = ?`)
+        .run(...params);
     }
 
-    values.push(id);
-    db.prepare(`UPDATE todos SET ${updates.join(', ')} WHERE id = ?`).run(...values);
-    return getTodoById(id);
-  } catch (error) {
-    if (error instanceof DatabaseError) {
-      throw error;
-    }
-    throw new DatabaseError(
-      `Failed to update todo: ${error instanceof Error ? error.message : String(error)}`,
-      'updateTodo'
-    );
+    return this.getTodoById(id)!;
   }
-}
 
-export function deleteTodo(id: number): boolean {
-  try {
-    const db = getDatabase();
-    const result = db.prepare('DELETE FROM todos WHERE id = ?').run(id);
-    return result.changes > 0;
-  } catch (error) {
-    throw new DatabaseError(
-      `Failed to delete todo: ${error instanceof Error ? error.message : String(error)}`,
-      'deleteTodo'
-    );
+  /**
+   * Deletes a todo item.
+   * @param id - The todo ID to delete
+   */
+  deleteTodo(id: number): void {
+    const result = this.db.prepare('DELETE FROM todos WHERE id = ?').run(id);
+
+    if (result.changes === 0) {
+      throw new NotFoundError('Todo', id);
+    }
   }
-}
 
-export function completeTodo(id: number): Todo | undefined {
-  return updateTodo(id, { completed: true });
-}
+  // ============================================================================
+  // Idea CRUD Operations
+  // ============================================================================
 
-// ============================================
-// Ideas
-// ============================================
+  /**
+   * Creates a new idea.
+   * @param data - The idea data to create
+   * @returns The created idea
+   */
+  createIdea(data: CreateIdeaInput): Idea {
+    if (!data.text) {
+      throw new ValidationError('Idea text is required');
+    }
 
-export function createIdea(data: CreateIdea): Idea {
-  try {
-    const db = getDatabase();
-    const stmt = db.prepare(`
-      INSERT INTO ideas (log_id, text, category, confidence)
+    // Validate foreign key
+    this.validateLogExists(data.logId);
+
+    // Validate text length
+    this.validateTextLength(data.text, 'Idea text', 1000);
+
+    const tagsJson = data.tags ? JSON.stringify(data.tags) : null;
+
+    const stmt = this.db.prepare(`
+      INSERT INTO ideas (log_id, text, status, tags)
       VALUES (?, ?, ?, ?)
     `);
+
     const result = stmt.run(
-      data.log_id,
+      data.logId,
       data.text,
-      data.category,
-      data.confidence
+      data.status ?? 'raw',
+      tagsJson
     );
-    const idea = getIdeaById(result.lastInsertRowid as number);
-    if (!idea) {
-      throw new DatabaseError('Failed to retrieve created idea', 'createIdea');
+
+    return this.getIdeaById(result.lastInsertRowid as number)!;
+  }
+
+  /**
+   * Gets an idea by its ID.
+   * @param id - The idea ID
+   * @returns The idea or null if not found
+   */
+  getIdeaById(id: number): Idea | null {
+    const row = this.db
+      .prepare('SELECT * FROM ideas WHERE id = ?')
+      .get(id) as IdeaRow | undefined;
+
+    return row ? this.transformIdeaRow(row) : null;
+  }
+
+  /**
+   * Gets all ideas for a specific log.
+   * @param logId - The log ID
+   * @returns Array of ideas
+   */
+  getIdeasByLogId(logId: number): Idea[] {
+    const rows = this.db
+      .prepare('SELECT * FROM ideas WHERE log_id = ? ORDER BY created_at ASC')
+      .all(logId) as IdeaRow[];
+
+    return rows.map((row) => this.transformIdeaRow(row));
+  }
+
+  /**
+   * Gets all ideas with optional filtering.
+   * @param options - Query options
+   * @returns Array of ideas
+   */
+  getAllIdeas(options?: IdeaQueryOptions): Idea[] {
+    const limit = options?.limit ?? 100;
+    const offset = options?.offset ?? 0;
+
+    let query = 'SELECT * FROM ideas';
+    const params: (string | number)[] = [];
+
+    if (options?.status) {
+      query += ' WHERE status = ?';
+      params.push(options.status);
     }
-    return idea;
-  } catch (error) {
-    if (error instanceof DatabaseError) {
-      throw error;
+
+    query += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
+    params.push(limit, offset);
+
+    const rows = this.db.prepare(query).all(...params) as IdeaRow[];
+
+    return rows.map((row) => this.transformIdeaRow(row));
+  }
+
+  /**
+   * Updates an idea.
+   * @param id - The idea ID to update
+   * @param data - The update data
+   * @returns The updated idea
+   */
+  updateIdea(id: number, data: UpdateIdeaInput): Idea {
+    const existing = this.getIdeaById(id);
+    if (!existing) {
+      throw new NotFoundError('Idea', id);
     }
-    throw new DatabaseError(
-      `Failed to create idea: ${error instanceof Error ? error.message : String(error)}`,
-      'createIdea'
-    );
-  }
-}
 
-export function getIdeaById(id: number): Idea | undefined {
-  try {
-    const db = getDatabase();
-    const row = db.prepare('SELECT * FROM ideas WHERE id = ?').get(id);
-    return row ? convertIdeaRow(row) : undefined;
-  } catch (error) {
-    throw new DatabaseError(
-      `Failed to get idea by id: ${error instanceof Error ? error.message : String(error)}`,
-      'getIdeaById'
-    );
-  }
-}
-
-export function getIdeasByLogId(logId: number): Idea[] {
-  try {
-    const db = getDatabase();
-    const rows = db.prepare('SELECT * FROM ideas WHERE log_id = ? ORDER BY created_at DESC').all(logId);
-    return rows.map(convertIdeaRow);
-  } catch (error) {
-    throw new DatabaseError(
-      `Failed to get ideas by log id: ${error instanceof Error ? error.message : String(error)}`,
-      'getIdeasByLogId'
-    );
-  }
-}
-
-export function getAllIdeas(status?: string, limit = 100, offset = 0): Idea[] {
-  try {
-    const db = getDatabase();
-    let rows: any[];
-    if (status) {
-      rows = db.prepare('SELECT * FROM ideas WHERE status = ? ORDER BY created_at DESC LIMIT ? OFFSET ?').all(status, limit, offset);
-    } else {
-      rows = db.prepare('SELECT * FROM ideas ORDER BY created_at DESC LIMIT ? OFFSET ?').all(limit, offset);
-    }
-    return rows.map(convertIdeaRow);
-  } catch (error) {
-    throw new DatabaseError(
-      `Failed to get all ideas: ${error instanceof Error ? error.message : String(error)}`,
-      'getAllIdeas'
-    );
-  }
-}
-
-export function updateIdea(id: number, data: UpdateIdea): Idea | undefined {
-  try {
-    const db = getDatabase();
-
-    // Whitelist of allowed columns to prevent SQL injection
-    const allowedColumns = new Set(['text', 'status', 'category', 'user_reclassified']);
     const updates: string[] = [];
-    const values: (string | number)[] = [];
+    const params: (string | number | null)[] = [];
 
     if (data.text !== undefined) {
+      this.validateTextLength(data.text, 'Idea text', 1000);
       updates.push('text = ?');
-      values.push(data.text);
+      params.push(data.text);
     }
     if (data.status !== undefined) {
-      // Validate status value
-      if (!['new', 'reviewing', 'implemented', 'archived'].includes(data.status)) {
-        throw new DatabaseError('Invalid status value', 'updateIdea');
-      }
       updates.push('status = ?');
-      values.push(data.status);
+      params.push(data.status);
     }
-    if (data.category !== undefined) {
-      updates.push('category = ?');
-      values.push(data.category);
-    }
-    if (data.user_reclassified !== undefined) {
-      updates.push('user_reclassified = ?');
-      values.push(data.user_reclassified ? 1 : 0);
+    if (data.tags !== undefined) {
+      updates.push('tags = ?');
+      params.push(data.tags ? JSON.stringify(data.tags) : null);
     }
 
-    if (updates.length === 0) {
-      return getIdeaById(id);
+    if (updates.length > 0) {
+      updates.push("updated_at = datetime('now')");
+      params.push(id);
+
+      // Safe: updates array is built from controlled strings only
+      this.db
+        .prepare(`UPDATE ideas SET ${updates.join(', ')} WHERE id = ?`)
+        .run(...params);
     }
 
-    values.push(id);
-    db.prepare(`UPDATE ideas SET ${updates.join(', ')} WHERE id = ?`).run(...values);
-    return getIdeaById(id);
-  } catch (error) {
-    if (error instanceof DatabaseError) {
-      throw error;
-    }
-    throw new DatabaseError(
-      `Failed to update idea: ${error instanceof Error ? error.message : String(error)}`,
-      'updateIdea'
-    );
+    return this.getIdeaById(id)!;
   }
-}
 
-export function deleteIdea(id: number): boolean {
-  try {
-    const db = getDatabase();
-    const result = db.prepare('DELETE FROM ideas WHERE id = ?').run(id);
-    return result.changes > 0;
-  } catch (error) {
-    throw new DatabaseError(
-      `Failed to delete idea: ${error instanceof Error ? error.message : String(error)}`,
-      'deleteIdea'
-    );
+  /**
+   * Deletes an idea.
+   * @param id - The idea ID to delete
+   */
+  deleteIdea(id: number): void {
+    const result = this.db.prepare('DELETE FROM ideas WHERE id = ?').run(id);
+
+    if (result.changes === 0) {
+      throw new NotFoundError('Idea', id);
+    }
   }
-}
 
-// ============================================
-// Learnings
-// ============================================
+  // ============================================================================
+  // Learning CRUD Operations
+  // ============================================================================
 
-export function createLearning(data: CreateLearning): Learning {
-  try {
-    const db = getDatabase();
-    const stmt = db.prepare(`
-      INSERT INTO learnings (log_id, text, topic, confidence)
+  /**
+   * Creates a new learning entry.
+   * @param data - The learning data to create
+   * @returns The created learning
+   */
+  createLearning(data: CreateLearningInput): Learning {
+    if (!data.text) {
+      throw new ValidationError('Learning text is required');
+    }
+
+    // Validate foreign key
+    this.validateLogExists(data.logId);
+
+    // Validate text length
+    this.validateTextLength(data.text, 'Learning text', 1000);
+
+    const stmt = this.db.prepare(`
+      INSERT INTO learnings (log_id, text, category)
+      VALUES (?, ?, ?)
+    `);
+
+    const result = stmt.run(data.logId, data.text, data.category ?? null);
+
+    return this.getLearningById(result.lastInsertRowid as number)!;
+  }
+
+  /**
+   * Gets a learning by its ID.
+   * @param id - The learning ID
+   * @returns The learning or null if not found
+   */
+  getLearningById(id: number): Learning | null {
+    const row = this.db
+      .prepare('SELECT * FROM learnings WHERE id = ?')
+      .get(id) as LearningRow | undefined;
+
+    return row ? this.transformLearningRow(row) : null;
+  }
+
+  /**
+   * Gets all learnings for a specific log.
+   * @param logId - The log ID
+   * @returns Array of learnings
+   */
+  getLearningsByLogId(logId: number): Learning[] {
+    const rows = this.db
+      .prepare('SELECT * FROM learnings WHERE log_id = ? ORDER BY created_at ASC')
+      .all(logId) as LearningRow[];
+
+    return rows.map((row) => this.transformLearningRow(row));
+  }
+
+  /**
+   * Gets all learnings.
+   * @returns Array of all learnings
+   */
+  getAllLearnings(): Learning[] {
+    const rows = this.db
+      .prepare('SELECT * FROM learnings ORDER BY created_at DESC')
+      .all() as LearningRow[];
+
+    return rows.map((row) => this.transformLearningRow(row));
+  }
+
+  /**
+   * Deletes a learning entry.
+   * @param id - The learning ID to delete
+   */
+  deleteLearning(id: number): void {
+    const result = this.db.prepare('DELETE FROM learnings WHERE id = ?').run(id);
+
+    if (result.changes === 0) {
+      throw new NotFoundError('Learning', id);
+    }
+  }
+
+  // ============================================================================
+  // Accomplishment CRUD Operations
+  // ============================================================================
+
+  /**
+   * Creates a new accomplishment.
+   * @param data - The accomplishment data to create
+   * @returns The created accomplishment
+   */
+  createAccomplishment(data: CreateAccomplishmentInput): Accomplishment {
+    if (!data.text) {
+      throw new ValidationError('Accomplishment text is required');
+    }
+
+    // Validate foreign key
+    this.validateLogExists(data.logId);
+
+    // Validate text length
+    this.validateTextLength(data.text, 'Accomplishment text', 1000);
+
+    const stmt = this.db.prepare(`
+      INSERT INTO accomplishments (log_id, text, impact)
+      VALUES (?, ?, ?)
+    `);
+
+    const result = stmt.run(data.logId, data.text, data.impact ?? 'medium');
+
+    return this.getAccomplishmentById(result.lastInsertRowid as number)!;
+  }
+
+  /**
+   * Gets an accomplishment by its ID.
+   * @param id - The accomplishment ID
+   * @returns The accomplishment or null if not found
+   */
+  getAccomplishmentById(id: number): Accomplishment | null {
+    const row = this.db
+      .prepare('SELECT * FROM accomplishments WHERE id = ?')
+      .get(id) as AccomplishmentRow | undefined;
+
+    return row ? this.transformAccomplishmentRow(row) : null;
+  }
+
+  /**
+   * Gets all accomplishments for a specific log.
+   * @param logId - The log ID
+   * @returns Array of accomplishments
+   */
+  getAccomplishmentsByLogId(logId: number): Accomplishment[] {
+    const rows = this.db
+      .prepare('SELECT * FROM accomplishments WHERE log_id = ? ORDER BY created_at ASC')
+      .all(logId) as AccomplishmentRow[];
+
+    return rows.map((row) => this.transformAccomplishmentRow(row));
+  }
+
+  /**
+   * Gets all accomplishments.
+   * @returns Array of all accomplishments
+   */
+  getAllAccomplishments(): Accomplishment[] {
+    const rows = this.db
+      .prepare('SELECT * FROM accomplishments ORDER BY created_at DESC')
+      .all() as AccomplishmentRow[];
+
+    return rows.map((row) => this.transformAccomplishmentRow(row));
+  }
+
+  /**
+   * Deletes an accomplishment.
+   * @param id - The accomplishment ID to delete
+   */
+  deleteAccomplishment(id: number): void {
+    const result = this.db.prepare('DELETE FROM accomplishments WHERE id = ?').run(id);
+
+    if (result.changes === 0) {
+      throw new NotFoundError('Accomplishment', id);
+    }
+  }
+
+  // ============================================================================
+  // Summary CRUD Operations
+  // ============================================================================
+
+  /**
+   * Creates a new weekly summary.
+   * @param data - The summary data to create
+   * @returns The created summary
+   */
+  createSummary(data: CreateSummaryInput): Summary {
+    if (!data.content) {
+      throw new ValidationError('Summary content is required');
+    }
+
+    // Validate date formats
+    this.validateDateFormat(data.weekStart, 'Week start date');
+    this.validateDateFormat(data.weekEnd, 'Week end date');
+
+    // Validate content length
+    this.validateTextLength(data.content, 'Summary content', 10000);
+
+    const highlightsJson = data.highlights ? JSON.stringify(data.highlights) : null;
+
+    const stmt = this.db.prepare(`
+      INSERT INTO summaries (week_start, week_end, content, highlights)
       VALUES (?, ?, ?, ?)
     `);
+
     const result = stmt.run(
-      data.log_id,
-      data.text,
-      data.topic,
-      data.confidence
-    );
-    const learning = getLearningById(result.lastInsertRowid as number);
-    if (!learning) {
-      throw new DatabaseError('Failed to retrieve created learning', 'createLearning');
-    }
-    return learning;
-  } catch (error) {
-    if (error instanceof DatabaseError) {
-      throw error;
-    }
-    throw new DatabaseError(
-      `Failed to create learning: ${error instanceof Error ? error.message : String(error)}`,
-      'createLearning'
-    );
-  }
-}
-
-export function getLearningById(id: number): Learning | undefined {
-  try {
-    const db = getDatabase();
-    return db.prepare('SELECT * FROM learnings WHERE id = ?').get(id) as Learning | undefined;
-  } catch (error) {
-    throw new DatabaseError(
-      `Failed to get learning by id: ${error instanceof Error ? error.message : String(error)}`,
-      'getLearningById'
-    );
-  }
-}
-
-export function getLearningsByLogId(logId: number): Learning[] {
-  try {
-    const db = getDatabase();
-    return db.prepare('SELECT * FROM learnings WHERE log_id = ? ORDER BY created_at DESC').all(logId) as Learning[];
-  } catch (error) {
-    throw new DatabaseError(
-      `Failed to get learnings by log id: ${error instanceof Error ? error.message : String(error)}`,
-      'getLearningsByLogId'
-    );
-  }
-}
-
-export function getAllLearnings(topic?: string, limit = 100, offset = 0): Learning[] {
-  try {
-    const db = getDatabase();
-    if (topic) {
-      return db.prepare('SELECT * FROM learnings WHERE topic = ? ORDER BY created_at DESC LIMIT ? OFFSET ?').all(topic, limit, offset) as Learning[];
-    }
-    return db.prepare('SELECT * FROM learnings ORDER BY created_at DESC LIMIT ? OFFSET ?').all(limit, offset) as Learning[];
-  } catch (error) {
-    throw new DatabaseError(
-      `Failed to get all learnings: ${error instanceof Error ? error.message : String(error)}`,
-      'getAllLearnings'
-    );
-  }
-}
-
-export function deleteLearning(id: number): boolean {
-  try {
-    const db = getDatabase();
-    const result = db.prepare('DELETE FROM learnings WHERE id = ?').run(id);
-    return result.changes > 0;
-  } catch (error) {
-    throw new DatabaseError(
-      `Failed to delete learning: ${error instanceof Error ? error.message : String(error)}`,
-      'deleteLearning'
-    );
-  }
-}
-
-// ============================================
-// Summaries
-// ============================================
-
-export function createSummary(data: CreateSummary): Summary {
-  try {
-    const db = getDatabase();
-    const stmt = db.prepare(`
-      INSERT INTO summaries (week_start, week_end, content, highlights, stats)
-      VALUES (?, ?, ?, ?, ?)
-    `);
-    const result = stmt.run(
-      data.week_start,
-      data.week_end,
+      data.weekStart,
+      data.weekEnd,
       data.content,
-      data.highlights,
-      data.stats
+      highlightsJson
     );
-    const summary = getSummaryById(result.lastInsertRowid as number);
-    if (!summary) {
-      throw new DatabaseError('Failed to retrieve created summary', 'createSummary');
+
+    return this.getSummaryById(result.lastInsertRowid as number)!;
+  }
+
+  /**
+   * Gets a summary by its ID.
+   * @param id - The summary ID
+   * @returns The summary or null if not found
+   */
+  private getSummaryById(id: number): Summary | null {
+    const row = this.db
+      .prepare('SELECT * FROM summaries WHERE id = ?')
+      .get(id) as SummaryRow | undefined;
+
+    return row ? this.transformSummaryRow(row) : null;
+  }
+
+  /**
+   * Gets a summary by week start date.
+   * @param weekStart - The week start date
+   * @returns The summary or null if not found
+   */
+  getSummaryByWeek(weekStart: Date): Summary | null {
+    const weekStartStr = weekStart.toISOString().split('T')[0];
+
+    const row = this.db
+      .prepare('SELECT * FROM summaries WHERE week_start = ?')
+      .get(weekStartStr) as SummaryRow | undefined;
+
+    return row ? this.transformSummaryRow(row) : null;
+  }
+
+  /**
+   * Gets all summaries.
+   * @returns Array of all summaries
+   */
+  getAllSummaries(): Summary[] {
+    const rows = this.db
+      .prepare('SELECT * FROM summaries ORDER BY week_start DESC')
+      .all() as SummaryRow[];
+
+    return rows.map((row) => this.transformSummaryRow(row));
+  }
+
+  /**
+   * Deletes a summary.
+   * @param id - The summary ID to delete
+   */
+  deleteSummary(id: number): void {
+    const result = this.db.prepare('DELETE FROM summaries WHERE id = ?').run(id);
+
+    if (result.changes === 0) {
+      throw new NotFoundError('Summary', id);
     }
-    return summary;
-  } catch (error) {
-    if (error instanceof DatabaseError) {
-      throw error;
-    }
-    throw new DatabaseError(
-      `Failed to create summary: ${error instanceof Error ? error.message : String(error)}`,
-      'createSummary'
-    );
   }
-}
 
-export function getSummaryById(id: number): Summary | undefined {
-  try {
-    const db = getDatabase();
-    return db.prepare('SELECT * FROM summaries WHERE id = ?').get(id) as Summary | undefined;
-  } catch (error) {
-    throw new DatabaseError(
-      `Failed to get summary by id: ${error instanceof Error ? error.message : String(error)}`,
-      'getSummaryById'
-    );
+  // ============================================================================
+  // Transaction Operations
+  // ============================================================================
+
+  /**
+   * Saves a log with all its segments in a single transaction.
+   * This ensures atomicity - either all segments are saved or none are.
+   *
+   * @param logData - The log data to create
+   * @param segments - Optional segments to create with the log
+   * @returns The created log with all segments
+   */
+  saveLogWithSegments(logData: CreateLogInput, segments?: LogSegments): LogWithSegments {
+    const saveTransaction = this.db.transaction(() => {
+      // Create the log
+      const log = this.createLog(logData);
+
+      // Create todos if provided
+      const todos: Todo[] = [];
+      if (segments?.todos) {
+        for (const todoData of segments.todos) {
+          const todo = this.createTodo({ ...todoData, logId: log.id });
+          todos.push(todo);
+        }
+      }
+
+      // Create ideas if provided
+      const ideas: Idea[] = [];
+      if (segments?.ideas) {
+        for (const ideaData of segments.ideas) {
+          const idea = this.createIdea({ ...ideaData, logId: log.id });
+          ideas.push(idea);
+        }
+      }
+
+      // Create learnings if provided
+      const learnings: Learning[] = [];
+      if (segments?.learnings) {
+        for (const learningData of segments.learnings) {
+          const learning = this.createLearning({ ...learningData, logId: log.id });
+          learnings.push(learning);
+        }
+      }
+
+      // Create accomplishments if provided
+      const accomplishments: Accomplishment[] = [];
+      if (segments?.accomplishments) {
+        for (const accomplishmentData of segments.accomplishments) {
+          const accomplishment = this.createAccomplishment({
+            ...accomplishmentData,
+            logId: log.id,
+          });
+          accomplishments.push(accomplishment);
+        }
+      }
+
+      return {
+        ...log,
+        todos,
+        ideas,
+        learnings,
+        accomplishments,
+      };
+    });
+
+    return saveTransaction();
   }
-}
 
-export function getSummaryByWeek(weekStart: string): Summary | undefined {
-  try {
-    const db = getDatabase();
-    return db.prepare('SELECT * FROM summaries WHERE week_start = ?').get(weekStart) as Summary | undefined;
-  } catch (error) {
-    throw new DatabaseError(
-      `Failed to get summary by week: ${error instanceof Error ? error.message : String(error)}`,
-      'getSummaryByWeek'
-    );
-  }
-}
-
-export function getAllSummaries(limit = 52, offset = 0): Summary[] {
-  try {
-    const db = getDatabase();
-    return db.prepare('SELECT * FROM summaries ORDER BY week_start DESC LIMIT ? OFFSET ?').all(limit, offset) as Summary[];
-  } catch (error) {
-    throw new DatabaseError(
-      `Failed to get all summaries: ${error instanceof Error ? error.message : String(error)}`,
-      'getAllSummaries'
-    );
-  }
-}
-
-export function deleteSummary(id: number): boolean {
-  try {
-    const db = getDatabase();
-    const result = db.prepare('DELETE FROM summaries WHERE id = ?').run(id);
-    return result.changes > 0;
-  } catch (error) {
-    throw new DatabaseError(
-      `Failed to delete summary: ${error instanceof Error ? error.message : String(error)}`,
-      'deleteSummary'
-    );
-  }
-}
-
-// ============================================
-// Utility functions
-// ============================================
-
-/**
- * Get all items extracted from a specific log
- */
-export function getLogWithExtractedItems(logId: number): {
-  log: Log;
-  accomplishments: Accomplishment[];
-  todos: Todo[];
-  ideas: Idea[];
-  learnings: Learning[];
-} | undefined {
-  try {
-    const log = getLogById(logId);
+  /**
+   * Gets a log with all its segments.
+   * @param logId - The log ID
+   * @returns The log with all segments or null if not found
+   */
+  getLogWithSegments(logId: number): LogWithSegments | null {
+    const log = this.getLogById(logId);
     if (!log) {
-      return undefined;
+      return null;
     }
 
     return {
-      log,
-      accomplishments: getAccomplishmentsByLogId(logId),
-      todos: getTodosByLogId(logId),
-      ideas: getIdeasByLogId(logId),
-      learnings: getLearningsByLogId(logId),
+      ...log,
+      todos: this.getTodosByLogId(logId),
+      ideas: this.getIdeasByLogId(logId),
+      learnings: this.getLearningsByLogId(logId),
+      accomplishments: this.getAccomplishmentsByLogId(logId),
     };
-  } catch (error) {
-    throw new DatabaseError(
-      `Failed to get log with extracted items: ${error instanceof Error ? error.message : String(error)}`,
-      'getLogWithExtractedItems'
-    );
   }
 }
 
+// Export singleton instance for convenience
+let instance: DatabaseService | null = null;
+let instancePath: string | undefined = undefined;
+
 /**
- * Batch insert extracted items from a log analysis
+ * Gets the shared DatabaseService instance.
+ * Creates one if it doesn't exist.
+ *
+ * @param dbPath - Optional database path. If provided when an instance already exists
+ *                 with a different path, a warning will be logged.
  */
-export function insertExtractedItems(
-  logId: number,
-  items: {
-    accomplishments?: Array<{ text: string; confidence?: number }>;
-    todos?: Array<{ text: string; priority?: 'low' | 'medium' | 'high'; confidence?: number }>;
-    ideas?: Array<{ text: string; category?: string; confidence?: number }>;
-    learnings?: Array<{ text: string; topic?: string; confidence?: number }>;
-  }
-): void {
-  try {
-    const db = getDatabase();
-
-    const insertAccomplishment = db.prepare(`
-      INSERT INTO accomplishments (log_id, text, confidence) VALUES (?, ?, ?)
-    `);
-    const insertTodo = db.prepare(`
-      INSERT INTO todos (log_id, text, priority, confidence) VALUES (?, ?, ?, ?)
-    `);
-    const insertIdea = db.prepare(`
-      INSERT INTO ideas (log_id, text, category, confidence) VALUES (?, ?, ?, ?)
-    `);
-    const insertLearning = db.prepare(`
-      INSERT INTO learnings (log_id, text, topic, confidence) VALUES (?, ?, ?, ?)
-    `);
-
-    const transaction = db.transaction(() => {
-      for (const item of items.accomplishments || []) {
-        insertAccomplishment.run(logId, item.text, item.confidence ?? null);
-      }
-      for (const item of items.todos || []) {
-        insertTodo.run(logId, item.text, item.priority ?? 'medium', item.confidence ?? null);
-      }
-      for (const item of items.ideas || []) {
-        insertIdea.run(logId, item.text, item.category ?? null, item.confidence ?? null);
-      }
-      for (const item of items.learnings || []) {
-        insertLearning.run(logId, item.text, item.topic ?? null, item.confidence ?? null);
-      }
-    });
-
-    transaction();
-  } catch (error) {
-    throw new DatabaseError(
-      `Failed to insert extracted items: ${error instanceof Error ? error.message : String(error)}`,
-      'insertExtractedItems'
+export function getDatabaseService(dbPath?: string): DatabaseService {
+  if (!instance) {
+    instance = new DatabaseService(dbPath);
+    instancePath = dbPath;
+  } else if (dbPath !== undefined && dbPath !== instancePath) {
+    console.warn(
+      `getDatabaseService called with different dbPath. ` +
+      `Existing instance uses "${instancePath}", ` +
+      `ignoring requested path "${dbPath}". ` +
+      `Call closeDatabaseService() first to create a new instance.`
     );
+  }
+  return instance;
+}
+
+/**
+ * Closes and clears the shared DatabaseService instance.
+ */
+export function closeDatabaseService(): void {
+  if (instance) {
+    instance.close();
+    instance = null;
+    instancePath = undefined;
   }
 }
