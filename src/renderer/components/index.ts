@@ -12,3 +12,6 @@ export { ProgressIndicator } from './ProgressIndicator';
 export type { ProgressIndicatorProps } from './ProgressIndicator';
 
 export { RecordingDemo } from './RecordingDemo';
+
+export { LearningsList } from './LearningsList';
+export type { LearningsListProps, LearningWithLog } from './LearningsList';
