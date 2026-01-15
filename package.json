@@ -20,8 +20,10 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
+    "@google/generative-ai": "^0.21.0",
     "better-sqlite3": "^9.2.2",
-    "electron-store": "^8.1.0"
+    "electron-store": "^8.1.0",
+    "keytar": "^7.9.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.8",
