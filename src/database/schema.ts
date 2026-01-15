@@ -3,7 +3,7 @@
  * AI-9/AI-10: Database schema definitions
  */
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 /**
  * SQL statements to create all database tables.
@@ -24,12 +24,16 @@ CREATE TABLE IF NOT EXISTS logs (
   audio_path TEXT,
   transcript TEXT,
   summary TEXT,
+  pending_analysis INTEGER DEFAULT 0,
+  retry_count INTEGER DEFAULT 0,
+  last_error TEXT,
   created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT DEFAULT (datetime('now'))
 );
 
 -- Index for date lookups
 CREATE INDEX IF NOT EXISTS idx_logs_date ON logs(date);
+CREATE INDEX IF NOT EXISTS idx_logs_pending ON logs(pending_analysis);
 
 -- Todos table: Action items from logs
 CREATE TABLE IF NOT EXISTS todos (
@@ -115,6 +119,14 @@ CREATE TABLE IF NOT EXISTS schema_version (
  * Migration SQL statements for future schema updates
  */
 export const MIGRATIONS: Record<number, string> = {
-  // Future migrations will be added here
-  // 2: 'ALTER TABLE logs ADD COLUMN mood TEXT;',
+  // AI-18: Add pending analysis support
+  2: `
+    -- Add pending analysis fields to logs table
+    ALTER TABLE logs ADD COLUMN pending_analysis INTEGER DEFAULT 0;
+    ALTER TABLE logs ADD COLUMN retry_count INTEGER DEFAULT 0;
+    ALTER TABLE logs ADD COLUMN last_error TEXT;
+
+    -- Add index for pending analysis queries
+    CREATE INDEX IF NOT EXISTS idx_logs_pending ON logs(pending_analysis);
+  `,
 };
