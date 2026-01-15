@@ -12,3 +12,8 @@ export { ProgressIndicator } from './ProgressIndicator';
 export type { ProgressIndicatorProps } from './ProgressIndicator';
 
 export { RecordingDemo } from './RecordingDemo';
+
+export { TodoList } from './TodoList';
+export type { TodoListProps, TodoWithConfidence } from './TodoList';
+
+export { TodoListDemo } from './TodoListDemo';

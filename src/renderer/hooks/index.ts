@@ -7,3 +7,6 @@
 
 export { useRecordingState } from './useRecordingState';
 export type { UseRecordingStateReturn } from './useRecordingState';
+
+export { useTodos, setTodoConfidence } from './useTodos';
+export type { UseTodosResult } from './useTodos';

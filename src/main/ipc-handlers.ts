@@ -89,6 +89,46 @@ export class IPCHandlers {
         throw error;
       }
     });
+
+    // AI-27: Todo operations
+    ipcMain.handle('todos:getAll', async (event, data) => {
+      try {
+        const options = data || {};
+        return this.storageService.getAllTodos(options);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Failed to fetch todos';
+        throw new Error(message);
+      }
+    });
+
+    ipcMain.handle('todos:toggleComplete', async (event, data) => {
+      try {
+        const { todoId, completed } = data;
+        if (typeof todoId !== 'number') {
+          throw new Error('Invalid todo ID');
+        }
+        if (typeof completed !== 'boolean') {
+          throw new Error('Invalid completed status');
+        }
+        return this.storageService.updateTodo(todoId, { completed });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Failed to update todo';
+        throw new Error(message);
+      }
+    });
+
+    ipcMain.handle('todos:getLog', async (event, data) => {
+      try {
+        const { logId } = data;
+        if (typeof logId !== 'number') {
+          throw new Error('Invalid log ID');
+        }
+        return this.storageService.getLogById(logId);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Failed to fetch log';
+        throw new Error(message);
+      }
+    });
   }
 
   /**
@@ -98,6 +138,9 @@ export class IPCHandlers {
   unregisterHandlers(): void {
     ipcMain.removeHandler('analyze:audio');
     ipcMain.removeHandler('analyze:text');
+    ipcMain.removeHandler('todos:getAll');
+    ipcMain.removeHandler('todos:toggleComplete');
+    ipcMain.removeHandler('todos:getLog');
   }
 
   /**

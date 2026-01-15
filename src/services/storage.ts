@@ -14,8 +14,12 @@ import {
   CreateIdeaInput,
   CreateLearningInput,
   CreateAccomplishmentInput,
+  UpdateTodoInput,
   LogWithSegments,
   LogSegments,
+  Log,
+  Todo,
+  TodoQueryOptions,
 } from '../types/database';
 import { AnalysisResult, Segment, SegmentType } from '../types';
 
@@ -222,5 +226,39 @@ export class StorageService {
   }): LogWithSegments[] {
     const logs = this.db.getAllLogs(options);
     return logs.map((log) => this.db.getLogWithSegments(log.id)!);
+  }
+
+  /**
+   * Gets all todos with optional filtering.
+   * AI-27: Support for TodoList component
+   *
+   * @param options - Query options (completed filter, pagination)
+   * @returns Array of todos
+   */
+  getAllTodos(options?: TodoQueryOptions): Todo[] {
+    return this.db.getAllTodos(options);
+  }
+
+  /**
+   * Updates a todo.
+   * AI-27: Support for TodoList component
+   *
+   * @param todoId - The todo ID to update
+   * @param data - The update data
+   * @returns The updated todo
+   */
+  updateTodo(todoId: number, data: UpdateTodoInput): Todo {
+    return this.db.updateTodo(todoId, data);
+  }
+
+  /**
+   * Gets a log by ID.
+   * AI-27: Support for viewing source log from todo
+   *
+   * @param logId - The log ID
+   * @returns The log or null if not found
+   */
+  getLogById(logId: number): Log | null {
+    return this.db.getLogById(logId);
   }
 }
