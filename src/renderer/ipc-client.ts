@@ -39,6 +39,24 @@ interface ElectronAPI {
 }
 
 /**
+ * Validate that the API has all required methods
+ */
+function validateElectronAPI(api: unknown): api is ElectronAPI {
+  if (!api || typeof api !== 'object') {
+    return false;
+  }
+
+  const obj = api as any;
+  return (
+    typeof obj.analyzeAudio === 'function' &&
+    typeof obj.analyzeText === 'function' &&
+    typeof obj.onAnalyzeProgress === 'function' &&
+    typeof obj.onAnalyzeComplete === 'function' &&
+    typeof obj.onAnalyzeError === 'function'
+  );
+}
+
+/**
  * Get the Electron API from the window object
  * This is injected by the preload script
  */
@@ -46,7 +64,14 @@ function getElectronAPI(): ElectronAPI {
   if (typeof window === 'undefined' || !('electron' in window)) {
     throw new Error('Electron API not found. Make sure preload script is loaded.');
   }
-  return (window as any).electron as ElectronAPI;
+
+  const api = (window as any).electron;
+
+  if (!validateElectronAPI(api)) {
+    throw new Error('Invalid Electron API: missing required methods');
+  }
+
+  return api;
 }
 
 /**

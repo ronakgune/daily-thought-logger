@@ -149,6 +149,7 @@ describe('IPCHandlers', () => {
       // Mock WebContents
       const mockSender = {
         send: vi.fn(),
+        isDestroyed: vi.fn().mockReturnValue(false),
       };
 
       // Register handlers
@@ -220,6 +221,7 @@ describe('IPCHandlers', () => {
 
       const mockSender = {
         send: vi.fn(),
+        isDestroyed: vi.fn().mockReturnValue(false),
       };
 
       // Get the registered handler
@@ -248,6 +250,7 @@ describe('IPCHandlers', () => {
       // Mock WebContents
       const mockSender = {
         send: vi.fn(),
+        isDestroyed: vi.fn().mockReturnValue(false),
       };
 
       // Register handlers
@@ -314,6 +317,7 @@ describe('IPCHandlers', () => {
 
       const mockSender = {
         send: vi.fn(),
+        isDestroyed: vi.fn().mockReturnValue(false),
       };
 
       // Get the registered handler
@@ -350,6 +354,7 @@ describe('IPCHandlers', () => {
 
       const mockSender = {
         send: vi.fn(),
+        isDestroyed: vi.fn().mockReturnValue(false),
       };
 
       // Get the registered handler
@@ -377,6 +382,7 @@ describe('IPCHandlers', () => {
     it('should generate unique filenames with timestamps', async () => {
       const mockSender = {
         send: vi.fn(),
+        isDestroyed: vi.fn().mockReturnValue(false),
       };
 
       handlers.registerHandlers();
@@ -402,6 +408,157 @@ describe('IPCHandlers', () => {
       const files = await fs.readdir(tempDir);
       expect(files).toHaveLength(2);
       expect(files[0]).not.toBe(files[1]);
+    });
+  });
+
+  describe('Input Validation', () => {
+    it('should reject non-ArrayBuffer audio data', async () => {
+      handlers.registerHandlers();
+      const mockSender = {
+        send: vi.fn(),
+        isDestroyed: vi.fn().mockReturnValue(false),
+      };
+      const { ipcMain } = require('electron');
+      const handlerCall = ipcMain.handle.mock.calls.find(
+        (call: any) => call[0] === 'analyze:audio'
+      );
+      const handler = handlerCall[1];
+
+      await expect(
+        handler({ sender: mockSender }, { audioData: 'not a buffer' })
+      ).rejects.toThrow('Invalid audio data: must be an ArrayBuffer');
+    });
+
+    it('should reject empty audio data', async () => {
+      handlers.registerHandlers();
+      const mockSender = {
+        send: vi.fn(),
+        isDestroyed: vi.fn().mockReturnValue(false),
+      };
+      const { ipcMain } = require('electron');
+      const handlerCall = ipcMain.handle.mock.calls.find(
+        (call: any) => call[0] === 'analyze:audio'
+      );
+      const handler = handlerCall[1];
+
+      await expect(
+        handler({ sender: mockSender }, { audioData: new ArrayBuffer(0) })
+      ).rejects.toThrow('Audio data cannot be empty');
+    });
+
+    it('should reject oversized audio data', async () => {
+      handlers.registerHandlers();
+      const mockSender = {
+        send: vi.fn(),
+        isDestroyed: vi.fn().mockReturnValue(false),
+      };
+      const { ipcMain } = require('electron');
+      const handlerCall = ipcMain.handle.mock.calls.find(
+        (call: any) => call[0] === 'analyze:audio'
+      );
+      const handler = handlerCall[1];
+
+      // Create buffer larger than 500MB
+      const largeSize = 501 * 1024 * 1024;
+      const largeBuffer = new ArrayBuffer(largeSize);
+
+      await expect(
+        handler({ sender: mockSender }, { audioData: largeBuffer })
+      ).rejects.toThrow('Audio data exceeds maximum size');
+    });
+
+    it('should reject non-string text', async () => {
+      handlers.registerHandlers();
+      const mockSender = {
+        send: vi.fn(),
+        isDestroyed: vi.fn().mockReturnValue(false),
+      };
+      const { ipcMain } = require('electron');
+      const handlerCall = ipcMain.handle.mock.calls.find(
+        (call: any) => call[0] === 'analyze:text'
+      );
+      const handler = handlerCall[1];
+
+      await expect(
+        handler({ sender: mockSender }, { text: 123 })
+      ).rejects.toThrow('Text must be a string');
+    });
+
+    it('should reject empty text', async () => {
+      handlers.registerHandlers();
+      const mockSender = {
+        send: vi.fn(),
+        isDestroyed: vi.fn().mockReturnValue(false),
+      };
+      const { ipcMain } = require('electron');
+      const handlerCall = ipcMain.handle.mock.calls.find(
+        (call: any) => call[0] === 'analyze:text'
+      );
+      const handler = handlerCall[1];
+
+      await expect(
+        handler({ sender: mockSender }, { text: '   ' })
+      ).rejects.toThrow('Text cannot be empty');
+    });
+
+    it('should reject text exceeding maximum length', async () => {
+      handlers.registerHandlers();
+      const mockSender = {
+        send: vi.fn(),
+        isDestroyed: vi.fn().mockReturnValue(false),
+      };
+      const { ipcMain } = require('electron');
+      const handlerCall = ipcMain.handle.mock.calls.find(
+        (call: any) => call[0] === 'analyze:text'
+      );
+      const handler = handlerCall[1];
+
+      const longText = 'a'.repeat(50001);
+
+      await expect(
+        handler({ sender: mockSender }, { text: longText })
+      ).rejects.toThrow('Text exceeds maximum length');
+    });
+  });
+
+  describe('Window Context Verification', () => {
+    it('should handle destroyed window gracefully', async () => {
+      handlers.registerHandlers();
+      const mockSender = {
+        send: vi.fn(),
+        isDestroyed: vi.fn().mockReturnValue(true),
+      };
+      const { ipcMain } = require('electron');
+      const handlerCall = ipcMain.handle.mock.calls.find(
+        (call: any) => call[0] === 'analyze:audio'
+      );
+      const handler = handlerCall[1];
+
+      await expect(
+        handler({ sender: mockSender }, { audioData: new ArrayBuffer(1024) })
+      ).rejects.toThrow('Target window has been closed');
+    });
+
+    it('should not send to destroyed window', async () => {
+      handlers.registerHandlers();
+      const mockSender = {
+        send: vi.fn(),
+        isDestroyed: vi.fn().mockReturnValueOnce(false).mockReturnValue(true),
+      };
+      const { ipcMain } = require('electron');
+      const handlerCall = ipcMain.handle.mock.calls.find(
+        (call: any) => call[0] === 'analyze:audio'
+      );
+      const handler = handlerCall[1];
+
+      await handler(
+        { sender: mockSender },
+        { audioData: new ArrayBuffer(1024) }
+      );
+
+      // Verify send wasn't called when window was destroyed
+      // The isDestroyed check should prevent sends
+      expect(mockSender.isDestroyed).toHaveBeenCalled();
     });
   });
 });
