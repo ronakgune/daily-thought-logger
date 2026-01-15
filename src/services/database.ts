@@ -1137,6 +1137,16 @@ export class DatabaseService {
     };
   }
 
+  /**
+   * Runs a function within a database transaction.
+   * @param fn - The function to run in the transaction
+   * @returns The result of the function
+   */
+  runTransaction<T>(fn: () => T): T {
+    const transaction = this.db.transaction(fn);
+    return transaction();
+  }
+
   // ============================================================================
   // Pending Analysis Operations (AI-18)
   // ============================================================================

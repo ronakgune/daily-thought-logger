@@ -16,6 +16,7 @@
 
 import * as path from 'path';
 import * as fs from 'fs';
+import * as crypto from 'crypto';
 import { app } from 'electron';
 import { DatabaseService } from './database';
 import { GeminiService } from './gemini';
@@ -101,8 +102,8 @@ export class PendingQueueService {
    */
   private async saveAudioFile(audioBuffer: Buffer, date: string): Promise<string> {
     const audioDir = this.getAudioStorageDir();
-    const timestamp = new Date().getTime();
-    const filename = `${date}-${timestamp}.wav`;
+    const uuid = crypto.randomUUID();
+    const filename = `${date}-${uuid}.wav`;
     const audioPath = path.join(audioDir, filename);
 
     return new Promise((resolve, reject) => {
@@ -143,53 +144,60 @@ export class PendingQueueService {
     // Step 1: Save audio file to disk first (before any analysis attempt)
     const audioPath = await this.saveAudioFile(audioBuffer, date);
 
-    // Step 2: Create initial log record with audio path
-    const log = this.db.createLog({
-      date,
-      audioPath,
-      transcript: null,
-      summary: null,
-    });
-
-    // Step 3: Attempt transcription and analysis
+    // Step 2: Attempt transcription and analysis
     try {
       // Try to transcribe the audio
       const transcriptionResult = await this.gemini.transcribeAudio(audioBuffer);
 
-      // Update log with transcript
-      const updatedLog = this.db.updateLog(log.id, {
-        transcript: transcriptionResult.text,
+      // Step 3: Create log record and mark as analyzed in a single transaction
+      const logId = this.db.runTransaction(() => {
+        const log = this.db.createLog({
+          date,
+          audioPath,
+          transcript: transcriptionResult.text,
+          summary: null,
+        });
+
+        // Try to analyze the transcript
+        // TODO: This should integrate with the analysis service (AI-14)
+        // For now, we'll just save the transcript and mark as analyzed
+        this.db.markLogAsAnalyzed(log.id);
+
+        return log.id;
       });
 
-      // Try to analyze the transcript
-      // TODO: This should integrate with the analysis service (AI-14)
-      // For now, we'll just save the transcript and mark as analyzed
-      this.db.markLogAsAnalyzed(log.id);
-
-      return log.id;
+      return logId;
     } catch (error) {
       // Handle analysis failure
       const geminiError = error as GeminiError;
 
-      // If it's a retryable error, mark as pending
-      if (this.isRetryableError(geminiError)) {
-        this.db.markLogAsPending(log.id, geminiError.message);
-        console.log(
-          `Log ${log.id} marked as pending due to: ${geminiError.message}`
-        );
-      } else {
-        // For non-retryable errors (like invalid API key), store error but don't mark pending
-        this.db.updateLog(log.id, {
+      // Create log record in a transaction with appropriate status
+      const logId = this.db.runTransaction(() => {
+        const log = this.db.createLog({
+          date,
+          audioPath,
           transcript: null,
           summary: null,
         });
-        this.db.markLogAsPending(log.id, geminiError.message);
-        console.error(
-          `Log ${log.id} failed with non-retryable error: ${geminiError.message}`
-        );
-      }
 
-      return log.id;
+        // If it's a retryable error, mark as pending
+        if (this.isRetryableError(geminiError)) {
+          this.db.markLogAsPending(log.id, geminiError.message);
+          console.log(
+            `Log ${log.id} marked as pending due to: ${geminiError.message}`
+          );
+        } else {
+          // For non-retryable errors (like invalid API key), don't mark as pending
+          // Just log the error - the log remains with null transcript/summary
+          console.error(
+            `Log ${log.id} failed with non-retryable error: ${geminiError.message}`
+          );
+        }
+
+        return log.id;
+      });
+
+      return logId;
     }
   }
 

@@ -185,7 +185,7 @@ describe('PendingQueueService', () => {
       expect(log!.lastError).toBe('Rate limit exceeded');
     });
 
-    it('should store error for non-retryable errors', async () => {
+    it('should not mark as pending for non-retryable errors', async () => {
       const apiKeyError: GeminiError = {
         code: 'INVALID_API_KEY',
         message: 'Invalid API key',
@@ -196,8 +196,9 @@ describe('PendingQueueService', () => {
       const logId = await pendingQueue.queueForAnalysis(audioBuffer, '2024-01-15');
 
       const log = db.getLogById(logId);
-      expect(log!.pendingAnalysis).toBe(true);
-      expect(log!.lastError).toBe('Invalid API key');
+      expect(log!.pendingAnalysis).toBe(false);
+      expect(log!.transcript).toBeNull();
+      expect(log!.summary).toBeNull();
     });
   });
 
