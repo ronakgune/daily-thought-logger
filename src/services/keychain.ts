@@ -8,11 +8,6 @@ import keytar from 'keytar';
 
 const SERVICE_NAME = 'daily-thought-logger';
 
-export interface KeychainEntry {
-  account: string;
-  password: string;
-}
-
 /**
  * KeychainService provides secure storage for sensitive data
  * using the macOS Keychain via keytar
@@ -80,16 +75,13 @@ export class KeychainService {
   }
 
   /**
-   * List all accounts stored for this service
-   * @returns Array of account/password pairs
+   * List all account names stored for this service
+   * @returns Array of account identifiers (passwords are NOT included for security)
    */
-  async listAccounts(): Promise<KeychainEntry[]> {
+  async listAccounts(): Promise<string[]> {
     try {
       const credentials = await keytar.findCredentials(this.serviceName);
-      return credentials.map((cred) => ({
-        account: cred.account,
-        password: cred.password,
-      }));
+      return credentials.map((cred) => cred.account);
     } catch (error) {
       throw new Error(
         `Failed to list keychain accounts: ${error instanceof Error ? error.message : 'Unknown error'}`

@@ -84,15 +84,23 @@ export class GeminiService {
   }
 
   /**
-   * Validate an API key by making a test request
+   * Validate an API key format and optionally test it with the API
    * @param key - The API key to validate
+   * @param validateWithApi - If true, makes a live API request to verify the key (default: false)
    * @returns True if the key is valid
    */
-  async validateApiKey(key: string): Promise<boolean> {
+  async validateApiKey(key: string, validateWithApi: boolean = false): Promise<boolean> {
+    // Always perform format validation first
     if (!key || !key.startsWith('AIza')) {
       return false;
     }
 
+    // If only format validation is requested, return true
+    if (!validateWithApi) {
+      return true;
+    }
+
+    // Perform live API validation if requested
     try {
       const testClient = new GoogleGenerativeAI(key);
       const model = testClient.getGenerativeModel({ model: DEFAULT_MODEL });
@@ -133,6 +141,38 @@ export class GeminiService {
     audioBuffer: Buffer,
     mimeType: string = 'audio/wav'
   ): Promise<TranscriptionResult> {
+    // Input validation
+    const MAX_AUDIO_SIZE = 20 * 1024 * 1024; // 20MB in bytes
+    const VALID_AUDIO_MIME_TYPES = [
+      'audio/wav',
+      'audio/mp3',
+      'audio/mpeg',
+      'audio/aac',
+      'audio/ogg',
+      'audio/flac',
+    ];
+
+    // Validate buffer is not empty
+    if (!audioBuffer || audioBuffer.length === 0) {
+      throw this.createError('INVALID_REQUEST', 'Audio buffer cannot be empty');
+    }
+
+    // Validate buffer size (max 20MB)
+    if (audioBuffer.length > MAX_AUDIO_SIZE) {
+      throw this.createError(
+        'INVALID_REQUEST',
+        `Audio file too large. Maximum size is 20MB, got ${(audioBuffer.length / (1024 * 1024)).toFixed(2)}MB`
+      );
+    }
+
+    // Validate MIME type
+    if (!VALID_AUDIO_MIME_TYPES.includes(mimeType)) {
+      throw this.createError(
+        'INVALID_REQUEST',
+        `Invalid MIME type '${mimeType}'. Supported types: ${VALID_AUDIO_MIME_TYPES.join(', ')}`
+      );
+    }
+
     const model = await this.getModel('gemini-1.5-flash');
 
     try {
@@ -157,7 +197,9 @@ export class GeminiService {
       return {
         text,
         confidence: this.extractConfidence(response),
-        language: 'en', // Could be detected from response metadata
+        // Note: Language detection could be added by analyzing response metadata
+        // or by adding a language detection prompt. Currently defaults to 'en'.
+        language: 'en',
       };
     } catch (error) {
       throw this.handleError(error);
@@ -332,12 +374,47 @@ export class GeminiService {
 
   /**
    * Handle and transform errors from the Gemini API
+   *
+   * Error detection approach:
+   * 1. First check for HTTP status codes in error object (if available)
+   * 2. Fall back to message parsing for error classification
+   * 3. Message parsing checks both numeric codes (401, 429, etc.) and keywords
+   *
+   * Note: The Gemini SDK wraps errors, so we primarily rely on message parsing
+   * but check for status codes first when available for more reliable detection.
    */
   private handleError(error: unknown): GeminiError {
     if (error instanceof Error) {
+      // Check for HTTP status code in error object first (more reliable)
+      const errorWithStatus = error as Error & { status?: number; statusCode?: number };
+      const statusCode = errorWithStatus.status ?? errorWithStatus.statusCode;
+
+      if (statusCode) {
+        // HTTP status code-based detection (preferred when available)
+        if (statusCode === 429) {
+          return this.createError(
+            'RATE_LIMIT_EXCEEDED',
+            'Rate limit exceeded. Please wait before making more requests.'
+          );
+        }
+        if (statusCode === 401 || statusCode === 403) {
+          return this.createError(
+            'INVALID_API_KEY',
+            'Invalid or expired API key.'
+          );
+        }
+        if (statusCode === 503) {
+          return this.createError(
+            'SERVICE_UNAVAILABLE',
+            'Gemini service is temporarily unavailable. Please try again later.'
+          );
+        }
+      }
+
+      // Fall back to message parsing (necessary as SDK wraps errors)
       const message = error.message.toLowerCase();
 
-      // Rate limiting
+      // Rate limiting - check both status code and keywords
       if (message.includes('rate') || message.includes('429')) {
         return this.createError(
           'RATE_LIMIT_EXCEEDED',
