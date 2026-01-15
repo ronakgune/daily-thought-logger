@@ -156,62 +156,94 @@ Process the audio and provide your classification now.`;
 }
 
 /**
- * Validates the classification output format
+ * Validates the classification output format with comprehensive type checking
+ *
+ * This function performs strict runtime validation to ensure:
+ * - Proper structure and types for all fields
+ * - Confidence scores are within valid bounds (0-1)
+ * - Type-specific required fields are present and valid
+ * - No invalid enum values are used
  *
  * @param output - The output to validate
  * @returns True if valid, false otherwise
  */
 export function validateClassificationOutput(output: any): output is ClassificationOutput {
-  // Check basic structure
-  if (!output || typeof output !== 'object') {
+  // Reject null, undefined, and primitive types
+  if (!output || typeof output !== 'object' || Array.isArray(output)) {
     return false;
   }
 
-  // Check transcript
+  // Validate transcript field exists and is a non-empty string
   if (typeof output.transcript !== 'string') {
     return false;
   }
 
-  // Check segments array
+  // Validate segments field exists and is an array
   if (!Array.isArray(output.segments)) {
     return false;
   }
 
-  // Validate each segment
+  // Valid enum values for type checking
+  const validTypes: ClassificationType[] = ['accomplishment', 'idea', 'todo', 'learning'];
+  const validPriorities: TodoPriority[] = ['high', 'medium', 'low'];
+
+  // Validate each segment with strict type checking
   for (const segment of output.segments) {
-    // Required fields
-    if (!segment.type || !segment.text || typeof segment.confidence !== 'number') {
+    // Check that segment is an object
+    if (!segment || typeof segment !== 'object') {
       return false;
     }
 
-    // Valid type
-    const validTypes: ClassificationType[] = ['accomplishment', 'idea', 'todo', 'learning'];
-    if (!validTypes.includes(segment.type)) {
+    // Validate required fields exist with correct types
+    if (typeof segment.type !== 'string' || !segment.type) {
       return false;
     }
 
-    // Confidence range
-    if (segment.confidence < 0 || segment.confidence > 1) {
+    if (typeof segment.text !== 'string' || segment.text.length === 0) {
       return false;
     }
 
-    // Type-specific validations
-    if (segment.type === 'todo' && !segment.priority) {
+    if (typeof segment.confidence !== 'number') {
       return false;
     }
 
-    if (segment.type === 'idea' && !segment.category) {
+    // Validate type is a valid ClassificationType
+    if (!validTypes.includes(segment.type as ClassificationType)) {
       return false;
     }
 
-    if (segment.type === 'learning' && !segment.topic) {
+    // Comprehensive confidence bounds checking
+    // Reject NaN, Infinity, -Infinity, and values outside [0, 1]
+    if (
+      !Number.isFinite(segment.confidence) ||
+      segment.confidence < 0 ||
+      segment.confidence > 1
+    ) {
       return false;
     }
 
-    // Validate priority values
-    if (segment.priority) {
-      const validPriorities: TodoPriority[] = ['high', 'medium', 'low'];
-      if (!validPriorities.includes(segment.priority)) {
+    // Type-specific field validation
+    if (segment.type === 'todo') {
+      // TODOs must have a priority field
+      if (typeof segment.priority !== 'string' || !segment.priority) {
+        return false;
+      }
+      // Priority must be a valid TodoPriority value
+      if (!validPriorities.includes(segment.priority as TodoPriority)) {
+        return false;
+      }
+    }
+
+    if (segment.type === 'idea') {
+      // IDEAS must have a category field
+      if (typeof segment.category !== 'string' || segment.category.length === 0) {
+        return false;
+      }
+    }
+
+    if (segment.type === 'learning') {
+      // LEARNINGS must have a topic field
+      if (typeof segment.topic !== 'string' || segment.topic.length === 0) {
         return false;
       }
     }
