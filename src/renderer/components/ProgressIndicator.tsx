@@ -135,14 +135,17 @@ export function ProgressIndicator({
   progress,
   size = 'md',
   color = 'blue',
-  label = 'Loading',
+  label,
 }: ProgressIndicatorProps): JSX.Element {
+  // Ensure aria-label is never empty
+  const ariaLabel = label || 'Loading';
+
   return (
-    <div className="flex items-center justify-center" role="status" aria-label={label}>
+    <div className="flex items-center justify-center" role="status" aria-label={ariaLabel}>
       {type === 'spinner' && <Spinner size={size} color={color} />}
       {type === 'dots' && <Dots size={size} color={color} />}
       {type === 'bar' && <ProgressBar progress={progress} size={size} color={color} />}
-      <span className="sr-only">{label}</span>
+      <span className="sr-only">{ariaLabel}</span>
     </div>
   );
 }

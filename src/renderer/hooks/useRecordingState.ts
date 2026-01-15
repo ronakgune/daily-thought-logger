@@ -22,6 +22,8 @@ export interface UseRecordingStateReturn {
   errorMessage?: string;
   /** Analysis result when complete */
   result?: AnalysisResult;
+  /** Analysis progress percentage (0-100) when analyzing */
+  progress?: number;
   /** Start a new recording */
   startRecording: () => void;
   /** Stop the current recording */
@@ -62,6 +64,7 @@ export function useRecordingState(): UseRecordingStateReturn {
   const [duration, setDuration] = useState(0);
   const [errorMessage, setErrorMessage] = useState<string>();
   const [result, setResult] = useState<AnalysisResult>();
+  const [progress, setProgress] = useState<number>();
 
   // Timer ref for duration tracking
   const timerRef = useRef<NodeJS.Timeout>();
@@ -75,6 +78,7 @@ export function useRecordingState(): UseRecordingStateReturn {
     setDuration(0);
     setErrorMessage(undefined);
     setResult(undefined);
+    setProgress(undefined);
 
     // Start duration timer
     startTimeRef.current = Date.now();
@@ -87,7 +91,13 @@ export function useRecordingState(): UseRecordingStateReturn {
 
     // Notify main process (if IPC available)
     if (typeof window !== 'undefined' && (window as any).ipcRenderer) {
-      (window as any).ipcRenderer.send(IPC_CHANNELS.RECORDING_START);
+      try {
+        (window as any).ipcRenderer.send(IPC_CHANNELS.RECORDING_START);
+      } catch (error) {
+        console.error('Failed to send IPC message:', error);
+        setState('error');
+        setErrorMessage('Failed to communicate with recording service');
+      }
     }
   }, []);
 
@@ -105,7 +115,13 @@ export function useRecordingState(): UseRecordingStateReturn {
 
     // Notify main process (if IPC available)
     if (typeof window !== 'undefined' && (window as any).ipcRenderer) {
-      (window as any).ipcRenderer.send(IPC_CHANNELS.RECORDING_STOP);
+      try {
+        (window as any).ipcRenderer.send(IPC_CHANNELS.RECORDING_STOP);
+      } catch (error) {
+        console.error('Failed to send IPC message:', error);
+        setState('error');
+        setErrorMessage('Failed to communicate with recording service');
+      }
     }
   }, []);
 
@@ -117,6 +133,7 @@ export function useRecordingState(): UseRecordingStateReturn {
     setDuration(0);
     setErrorMessage(undefined);
     setResult(undefined);
+    setProgress(undefined);
   }, []);
 
   /**
@@ -133,6 +150,7 @@ export function useRecordingState(): UseRecordingStateReturn {
     setDuration(0);
     setErrorMessage(undefined);
     setResult(undefined);
+    setProgress(undefined);
   }, []);
 
   /**
@@ -148,14 +166,28 @@ export function useRecordingState(): UseRecordingStateReturn {
 
     // Recording complete handler
     const handleRecordingComplete = (_event: any, data: { audioData: ArrayBuffer; duration: number }) => {
+      // Validate payload
+      if (!data || typeof data.duration !== 'number') {
+        console.error('Invalid recording complete payload:', data);
+        setState('error');
+        setErrorMessage('Invalid response from recording service');
+        return;
+      }
       setState('analyzing');
+      setProgress(0);
       // Main process will automatically trigger analysis
     };
 
     // Recording error handler
     const handleRecordingError = (_event: any, data: { error: string }) => {
+      // Validate payload
+      if (!data || typeof data.error !== 'string') {
+        console.error('Invalid recording error payload:', data);
+        setErrorMessage('Unknown recording error');
+      } else {
+        setErrorMessage(data.error);
+      }
       setState('error');
-      setErrorMessage(data.error);
       if (timerRef.current) {
         clearInterval(timerRef.current);
         timerRef.current = undefined;
@@ -164,20 +196,41 @@ export function useRecordingState(): UseRecordingStateReturn {
 
     // Analysis progress handler
     const handleAnalyzeProgress = (_event: any, data: { status: string; progress?: number }) => {
-      // Could update with more granular progress if needed
+      // Validate payload
+      if (!data || typeof data.status !== 'string') {
+        console.error('Invalid analysis progress payload:', data);
+        return;
+      }
       setState('analyzing');
+      if (typeof data.progress === 'number') {
+        setProgress(Math.min(Math.max(data.progress, 0), 100));
+      }
     };
 
     // Analysis complete handler
     const handleAnalyzeComplete = (_event: any, data: { result: AnalysisResult }) => {
+      // Validate payload
+      if (!data || !data.result || typeof data.result.transcript !== 'string' || !Array.isArray(data.result.segments)) {
+        console.error('Invalid analysis complete payload:', data);
+        setState('error');
+        setErrorMessage('Invalid response from analysis service');
+        return;
+      }
       setState('complete');
       setResult(data.result);
+      setProgress(100);
     };
 
     // Analysis error handler
     const handleAnalyzeError = (_event: any, data: { error: string }) => {
+      // Validate payload
+      if (!data || typeof data.error !== 'string') {
+        console.error('Invalid analysis error payload:', data);
+        setErrorMessage('Unknown analysis error');
+      } else {
+        setErrorMessage(data.error);
+      }
       setState('error');
-      setErrorMessage(data.error);
     };
 
     // Register listeners
@@ -207,6 +260,7 @@ export function useRecordingState(): UseRecordingStateReturn {
     duration,
     errorMessage,
     result,
+    progress,
     startRecording,
     stopRecording,
     retry,
