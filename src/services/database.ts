@@ -19,6 +19,7 @@ import {
   Accomplishment,
   Summary,
   CreateLogInput,
+  UpdateLogInput,
   CreateTodoInput,
   UpdateTodoInput,
   CreateIdeaInput,
@@ -168,6 +169,85 @@ export class DatabaseService {
   }
 
   // ============================================================================
+  // Validation Helpers
+  // ============================================================================
+
+  /**
+   * Validates ISO 8601 date format (YYYY-MM-DD).
+   */
+  private validateDateFormat(date: string, fieldName: string): void {
+    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+    if (!dateRegex.test(date)) {
+      throw new ValidationError(
+        `${fieldName} must be in ISO 8601 format (YYYY-MM-DD), got: ${date}`
+      );
+    }
+  }
+
+  /**
+   * Validates text length limits.
+   */
+  private validateTextLength(
+    text: string,
+    fieldName: string,
+    maxLength: number
+  ): void {
+    if (text.length > maxLength) {
+      throw new ValidationError(
+        `${fieldName} exceeds maximum length of ${maxLength} characters (got ${text.length})`
+      );
+    }
+  }
+
+  /**
+   * Validates that a log exists before creating child records.
+   */
+  private validateLogExists(logId: number): void {
+    const log = this.getLogById(logId);
+    if (!log) {
+      throw new ValidationError(`Log with id ${logId} does not exist`);
+    }
+  }
+
+  /**
+   * Safely parses JSON with fallback to empty array.
+   */
+  private safeJsonParse(jsonString: string | null): string[] {
+    if (!jsonString) {
+      return [];
+    }
+    try {
+      const parsed = JSON.parse(jsonString);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (error) {
+      console.warn('Failed to parse JSON, returning empty array:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Whitelist of allowed columns for dynamic updates.
+   */
+  private readonly ALLOWED_TODO_UPDATE_COLUMNS = new Set([
+    'text',
+    'completed',
+    'due_date',
+    'priority',
+  ]);
+
+  private readonly ALLOWED_IDEA_UPDATE_COLUMNS = new Set([
+    'text',
+    'status',
+    'tags',
+  ]);
+
+  private readonly ALLOWED_LOG_UPDATE_COLUMNS = new Set([
+    'audio_path',
+    'transcript',
+    'summary',
+  ]);
+
+  // ============================================================================
   // Row Transformers (snake_case to camelCase)
   // ============================================================================
 
@@ -197,12 +277,14 @@ export class DatabaseService {
   }
 
   private transformIdeaRow(row: IdeaRow): Idea {
+    // Safely parse tags JSON with fallback
+    const tags = this.safeJsonParse(row.tags);
     return {
       id: row.id,
       logId: row.log_id,
       text: row.text,
       status: row.status,
-      tags: row.tags,
+      tags: tags.length > 0 ? JSON.stringify(tags) : null,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };
@@ -229,12 +311,14 @@ export class DatabaseService {
   }
 
   private transformSummaryRow(row: SummaryRow): Summary {
+    // Safely parse highlights JSON with fallback
+    const highlights = this.safeJsonParse(row.highlights);
     return {
       id: row.id,
       weekStart: row.week_start,
       weekEnd: row.week_end,
       content: row.content,
-      highlights: row.highlights,
+      highlights: highlights.length > 0 ? JSON.stringify(highlights) : null,
       generatedAt: row.generated_at,
     };
   }
@@ -251,6 +335,17 @@ export class DatabaseService {
   createLog(data: CreateLogInput): Log {
     if (!data.date) {
       throw new ValidationError('Log date is required');
+    }
+
+    // Validate date format
+    this.validateDateFormat(data.date, 'Log date');
+
+    // Validate length limits
+    if (data.transcript) {
+      this.validateTextLength(data.transcript, 'Transcript', 10000);
+    }
+    if (data.summary) {
+      this.validateTextLength(data.summary, 'Summary', 10000);
     }
 
     const stmt = this.db.prepare(`
@@ -315,6 +410,52 @@ export class DatabaseService {
   }
 
   /**
+   * Updates a log entry.
+   * @param id - The log ID to update
+   * @param data - The update data
+   * @returns The updated log
+   */
+  updateLog(id: number, data: UpdateLogInput): Log {
+    const existing = this.getLogById(id);
+    if (!existing) {
+      throw new NotFoundError('Log', id);
+    }
+
+    const updates: string[] = [];
+    const params: (string | null)[] = [];
+
+    if (data.audioPath !== undefined) {
+      updates.push('audio_path = ?');
+      params.push(data.audioPath);
+    }
+    if (data.transcript !== undefined) {
+      if (data.transcript) {
+        this.validateTextLength(data.transcript, 'Transcript', 10000);
+      }
+      updates.push('transcript = ?');
+      params.push(data.transcript);
+    }
+    if (data.summary !== undefined) {
+      if (data.summary) {
+        this.validateTextLength(data.summary, 'Summary', 10000);
+      }
+      updates.push('summary = ?');
+      params.push(data.summary);
+    }
+
+    if (updates.length > 0) {
+      updates.push("updated_at = datetime('now')");
+      params.push(id);
+
+      this.db
+        .prepare(`UPDATE logs SET ${updates.join(', ')} WHERE id = ?`)
+        .run(...params);
+    }
+
+    return this.getLogById(id)!;
+  }
+
+  /**
    * Deletes a log and all associated segments (cascades).
    * @param id - The log ID to delete
    */
@@ -338,6 +479,17 @@ export class DatabaseService {
   createTodo(data: CreateTodoInput): Todo {
     if (!data.text) {
       throw new ValidationError('Todo text is required');
+    }
+
+    // Validate foreign key
+    this.validateLogExists(data.logId);
+
+    // Validate text length
+    this.validateTextLength(data.text, 'Todo text', 500);
+
+    // Validate due date format if provided
+    if (data.dueDate) {
+      this.validateDateFormat(data.dueDate, 'Todo due date');
     }
 
     const stmt = this.db.prepare(`
@@ -424,6 +576,7 @@ export class DatabaseService {
     const params: (string | number | null)[] = [];
 
     if (data.text !== undefined) {
+      this.validateTextLength(data.text, 'Todo text', 500);
       updates.push('text = ?');
       params.push(data.text);
     }
@@ -432,6 +585,9 @@ export class DatabaseService {
       params.push(data.completed ? 1 : 0);
     }
     if (data.dueDate !== undefined) {
+      if (data.dueDate) {
+        this.validateDateFormat(data.dueDate, 'Todo due date');
+      }
       updates.push('due_date = ?');
       params.push(data.dueDate);
     }
@@ -444,6 +600,7 @@ export class DatabaseService {
       updates.push("updated_at = datetime('now')");
       params.push(id);
 
+      // Safe: updates array is built from controlled strings only
       this.db
         .prepare(`UPDATE todos SET ${updates.join(', ')} WHERE id = ?`)
         .run(...params);
@@ -477,6 +634,12 @@ export class DatabaseService {
     if (!data.text) {
       throw new ValidationError('Idea text is required');
     }
+
+    // Validate foreign key
+    this.validateLogExists(data.logId);
+
+    // Validate text length
+    this.validateTextLength(data.text, 'Idea text', 1000);
 
     const tagsJson = data.tags ? JSON.stringify(data.tags) : null;
 
@@ -562,6 +725,7 @@ export class DatabaseService {
     const params: (string | number | null)[] = [];
 
     if (data.text !== undefined) {
+      this.validateTextLength(data.text, 'Idea text', 1000);
       updates.push('text = ?');
       params.push(data.text);
     }
@@ -578,6 +742,7 @@ export class DatabaseService {
       updates.push("updated_at = datetime('now')");
       params.push(id);
 
+      // Safe: updates array is built from controlled strings only
       this.db
         .prepare(`UPDATE ideas SET ${updates.join(', ')} WHERE id = ?`)
         .run(...params);
@@ -611,6 +776,12 @@ export class DatabaseService {
     if (!data.text) {
       throw new ValidationError('Learning text is required');
     }
+
+    // Validate foreign key
+    this.validateLogExists(data.logId);
+
+    // Validate text length
+    this.validateTextLength(data.text, 'Learning text', 1000);
 
     const stmt = this.db.prepare(`
       INSERT INTO learnings (log_id, text, category)
@@ -686,6 +857,12 @@ export class DatabaseService {
       throw new ValidationError('Accomplishment text is required');
     }
 
+    // Validate foreign key
+    this.validateLogExists(data.logId);
+
+    // Validate text length
+    this.validateTextLength(data.text, 'Accomplishment text', 1000);
+
     const stmt = this.db.prepare(`
       INSERT INTO accomplishments (log_id, text, impact)
       VALUES (?, ?, ?)
@@ -759,6 +936,13 @@ export class DatabaseService {
     if (!data.content) {
       throw new ValidationError('Summary content is required');
     }
+
+    // Validate date formats
+    this.validateDateFormat(data.weekStart, 'Week start date');
+    this.validateDateFormat(data.weekEnd, 'Week end date');
+
+    // Validate content length
+    this.validateTextLength(data.content, 'Summary content', 10000);
 
     const highlightsJson = data.highlights ? JSON.stringify(data.highlights) : null;
 
@@ -920,14 +1104,26 @@ export class DatabaseService {
 
 // Export singleton instance for convenience
 let instance: DatabaseService | null = null;
+let instancePath: string | undefined = undefined;
 
 /**
  * Gets the shared DatabaseService instance.
  * Creates one if it doesn't exist.
+ *
+ * @param dbPath - Optional database path. If provided when an instance already exists
+ *                 with a different path, a warning will be logged.
  */
 export function getDatabaseService(dbPath?: string): DatabaseService {
   if (!instance) {
     instance = new DatabaseService(dbPath);
+    instancePath = dbPath;
+  } else if (dbPath !== undefined && dbPath !== instancePath) {
+    console.warn(
+      `getDatabaseService called with different dbPath. ` +
+      `Existing instance uses "${instancePath}", ` +
+      `ignoring requested path "${dbPath}". ` +
+      `Call closeDatabaseService() first to create a new instance.`
+    );
   }
   return instance;
 }
@@ -939,5 +1135,6 @@ export function closeDatabaseService(): void {
   if (instance) {
     instance.close();
     instance = null;
+    instancePath = undefined;
   }
 }

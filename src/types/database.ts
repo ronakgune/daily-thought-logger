@@ -78,6 +78,12 @@ export interface CreateLogInput {
   summary?: string | null;
 }
 
+export interface UpdateLogInput {
+  audioPath?: string | null;
+  transcript?: string | null;
+  summary?: string | null;
+}
+
 export interface CreateTodoInput {
   logId: number;
   text: string;
