@@ -28,3 +28,7 @@ export type {
   RecordingResult,
   AudioLevel,
 } from './audio-recorder';
+
+// Text input service (AI-22)
+export { TextInputService, textInputService } from './text-input';
+export type { InputMode, TextInputOptions, TextInputConfig } from './text-input';
