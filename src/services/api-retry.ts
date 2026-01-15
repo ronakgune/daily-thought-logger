@@ -192,7 +192,12 @@ export async function withRetry<T>(
     onRetry: options?.onRetry || DEFAULT_RETRY_OPTIONS.onRetry,
   };
 
-  let lastError: Error;
+  // Validate maxRetries is a positive integer
+  if (!Number.isInteger(opts.maxRetries) || opts.maxRetries < 0) {
+    throw new Error('maxRetries must be a non-negative integer');
+  }
+
+  let lastError: Error | undefined;
 
   for (let attempt = 0; attempt <= opts.maxRetries; attempt++) {
     try {
@@ -234,7 +239,7 @@ export async function withRetry<T>(
   }
 
   // This should never be reached, but TypeScript requires it
-  throw lastError!;
+  throw lastError || new Error('Retry failed with no error captured');
 }
 
 /**
@@ -302,7 +307,7 @@ export async function withTimeout<T>(
   timeoutMs: number,
   errorMessage?: string
 ): Promise<T> {
-  let timeoutHandle: NodeJS.Timeout;
+  let timeoutHandle: NodeJS.Timeout | undefined;
 
   const timeoutPromise = new Promise<never>((_, reject) => {
     timeoutHandle = setTimeout(() => {
@@ -317,7 +322,9 @@ export async function withTimeout<T>(
   try {
     return await Promise.race([promise, timeoutPromise]);
   } finally {
-    clearTimeout(timeoutHandle!);
+    if (timeoutHandle !== undefined) {
+      clearTimeout(timeoutHandle);
+    }
   }
 }
 
