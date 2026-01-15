@@ -12,3 +12,6 @@ export { ProgressIndicator } from './ProgressIndicator';
 export type { ProgressIndicatorProps } from './ProgressIndicator';
 
 export { RecordingDemo } from './RecordingDemo';
+
+export { IdeasList } from './IdeasList';
+export type { IdeasListProps } from './IdeasList';

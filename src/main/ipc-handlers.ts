@@ -50,6 +50,7 @@ const DEFAULT_CONFIG: AudioStorageConfig = {
 export class IPCHandlers {
   private analysisService: AnalysisService;
   private storageService: StorageService;
+  private databaseService: DatabaseService;
   private config: AudioStorageConfig;
 
   constructor(
@@ -58,6 +59,7 @@ export class IPCHandlers {
   ) {
     this.analysisService = new AnalysisService();
     this.storageService = new StorageService(databaseService);
+    this.databaseService = databaseService;
     this.config = config;
   }
 
@@ -89,6 +91,28 @@ export class IPCHandlers {
         throw error;
       }
     });
+
+    // Get all ideas handler
+    ipcMain.handle('ideas:getAll', async (event, data) => {
+      try {
+        return this.handleGetAllIdeas(data);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Failed to get ideas';
+        console.error('[IPC] Get ideas failed:', message);
+        throw error;
+      }
+    });
+
+    // Update idea status handler
+    ipcMain.handle('ideas:updateStatus', async (event, data) => {
+      try {
+        return this.handleUpdateIdeaStatus(data);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Failed to update idea';
+        console.error('[IPC] Update idea status failed:', message);
+        throw error;
+      }
+    });
   }
 
   /**
@@ -98,6 +122,8 @@ export class IPCHandlers {
   unregisterHandlers(): void {
     ipcMain.removeHandler('analyze:audio');
     ipcMain.removeHandler('analyze:text');
+    ipcMain.removeHandler('ideas:getAll');
+    ipcMain.removeHandler('ideas:updateStatus');
   }
 
   /**
@@ -396,6 +422,55 @@ export class IPCHandlers {
       }
       throw new Error(`Failed to create audio directory: ${error}`);
     }
+  }
+
+  /**
+   * Handle get all ideas request
+   *
+   * @param data - Optional query options
+   * @returns Array of ideas
+   */
+  private async handleGetAllIdeas(data?: unknown): Promise<import('../types/database').Idea[]> {
+    const options = data as import('../types/database').IdeaQueryOptions | undefined;
+    return this.databaseService.getAllIdeas(options);
+  }
+
+  /**
+   * Handle update idea status request
+   *
+   * @param data - Update data with ideaId and newStatus
+   * @returns Updated idea
+   */
+  private async handleUpdateIdeaStatus(data: unknown): Promise<import('../types/database').Idea> {
+    if (!data || typeof data !== 'object') {
+      throw new Error('Invalid update data: must be an object');
+    }
+
+    const { ideaId, newStatus } = data as any;
+
+    if (typeof ideaId !== 'number') {
+      throw new Error('Invalid ideaId: must be a number');
+    }
+
+    if (typeof newStatus !== 'string') {
+      throw new Error('Invalid newStatus: must be a string');
+    }
+
+    const validStatuses: import('../types/database').IdeaStatus[] = [
+      'raw',
+      'developing',
+      'actionable',
+      'archived',
+    ];
+    if (!validStatuses.includes(newStatus as any)) {
+      throw new Error(
+        `Invalid status: must be one of ${validStatuses.join(', ')}`
+      );
+    }
+
+    return this.databaseService.updateIdea(ideaId, {
+      status: newStatus as import('../types/database').IdeaStatus,
+    });
   }
 
   /**

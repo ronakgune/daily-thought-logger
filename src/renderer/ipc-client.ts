@@ -31,6 +31,8 @@ interface ElectronAPI {
   // Invoke methods (request-response)
   analyzeAudio: (audioData: ArrayBuffer) => Promise<LogWithSegments>;
   analyzeText: (text: string) => Promise<LogWithSegments>;
+  getAllIdeas: (options?: any) => Promise<any[]>;
+  updateIdeaStatus: (ideaId: number, newStatus: string) => Promise<any>;
 
   // Event listeners
   onAnalyzeProgress: (callback: ProgressCallback) => () => void;
@@ -50,6 +52,8 @@ function validateElectronAPI(api: unknown): api is ElectronAPI {
   return (
     typeof obj.analyzeAudio === 'function' &&
     typeof obj.analyzeText === 'function' &&
+    typeof obj.getAllIdeas === 'function' &&
+    typeof obj.updateIdeaStatus === 'function' &&
     typeof obj.onAnalyzeProgress === 'function' &&
     typeof obj.onAnalyzeComplete === 'function' &&
     typeof obj.onAnalyzeError === 'function'
@@ -195,6 +199,46 @@ export class IPCClient {
   onError(callback: ErrorCallback): () => void {
     this.errorCallbacks.add(callback);
     return () => this.errorCallbacks.delete(callback);
+  }
+
+  /**
+   * Get all ideas with optional filtering
+   *
+   * @param options - Query options for filtering ideas
+   * @returns Promise that resolves with array of ideas
+   *
+   * @example
+   * ```typescript
+   * const client = new IPCClient();
+   *
+   * // Get all ideas
+   * const allIdeas = await client.getAllIdeas();
+   *
+   * // Get ideas with specific status
+   * const newIdeas = await client.getAllIdeas({ status: 'raw' });
+   * ```
+   */
+  async getAllIdeas(options?: any): Promise<any[]> {
+    return this.api.getAllIdeas(options);
+  }
+
+  /**
+   * Update the status of an idea
+   *
+   * @param ideaId - The ID of the idea to update
+   * @param newStatus - The new status value
+   * @returns Promise that resolves with the updated idea
+   *
+   * @example
+   * ```typescript
+   * const client = new IPCClient();
+   *
+   * // Update idea status
+   * const updatedIdea = await client.updateIdeaStatus(42, 'developing');
+   * ```
+   */
+  async updateIdeaStatus(ideaId: number, newStatus: string): Promise<any> {
+    return this.api.updateIdeaStatus(ideaId, newStatus);
   }
 
   /**
