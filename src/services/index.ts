@@ -19,3 +19,7 @@ export type { AnalyzeAudioOptions, AnalyzeTextOptions } from './analysis';
 // Pending queue service (AI-18)
 export { PendingQueueService, pendingQueueService } from './pending-queue';
 export type { PendingLog, QueueResult, RetryConfig } from './pending-queue';
+
+// Text input service (AI-22)
+export { TextInputService, textInputService } from './text-input';
+export type { InputMode, TextInputOptions, TextInputConfig } from './text-input';
